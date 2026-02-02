@@ -1,7 +1,7 @@
 """Configuration and validation for NanoDistill distillation runs."""
 
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -103,6 +103,123 @@ class DistillationConfig(BaseModel):
         le=2048,
     )
 
+    # === v0.2.0+ New Parameters ===
+
+    temperature: float = Field(
+        default=0.7,
+        description="Sampling temperature for synthetic generation (0.0-2.0)",
+        ge=0.0,
+        le=2.0,
+    )
+
+    lora_rank: int = Field(
+        default=8,
+        description="LoRA adapter rank (higher = more parameters, 1-64)",
+        ge=1,
+        le=64,
+    )
+
+    lora_layers: int = Field(
+        default=4,
+        description="Number of layers to apply LoRA adapters (1-32)",
+        ge=1,
+        le=32,
+    )
+
+    val_split: float = Field(
+        default=0.2,
+        description="Validation set split ratio (0.0-0.5)",
+        ge=0.0,
+        le=0.5,
+    )
+
+    max_memory_gb: int = Field(
+        default=12,
+        description="Maximum RAM to use during training (GB). Auto-detects if not set.",
+        ge=2,
+        le=128,
+    )
+
+    memory_hard_limit_gb: int = Field(
+        default=12,
+        description="Hard stop limit - training stops if memory exceeds this (GB). Must be >= max_memory_gb.",
+        ge=2,
+        le=128,
+    )
+
+    cpu_capacity_percent: float = Field(
+        default=0.8,
+        description="CPU/memory threshold before training pauses (0.1-1.0, where 0.8 = 80%)",
+        ge=0.1,
+        le=1.0,
+    )
+
+    litellm_kwargs: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional LiteLLM parameters (temperature, top_p, timeout, seed, etc.)",
+    )
+
+    mlx_lm_kwargs: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional MLX-LM parameters (lora_dropout, warmup_steps, seed, etc.)",
+    )
+
+    @staticmethod
+    def get_system_defaults() -> tuple[int, int]:
+        """Auto-detect system capabilities and return safe defaults.
+
+        Returns:
+            (max_memory_gb, memory_hard_limit_gb) tuple
+        """
+        try:
+            import psutil
+
+            total_memory_gb = psutil.virtual_memory().total / (1024**3)
+
+            # Conservative defaults: use up to 90% of RAM, hard stop at 95%
+            # But cap both at 12GB for safety on most systems
+            max_memory = int(min(total_memory_gb * 0.9, 12))
+            hard_limit = int(min(total_memory_gb * 0.95, 12))
+
+            return max_memory, hard_limit
+        except Exception:
+            # Fallback if psutil fails
+            return 12, 12
+
+    def get_litellm_synthesis_kwargs(self) -> Dict[str, Any]:
+        """Get kwargs dict for LiteLLM synthetic generation calls.
+
+        Merges explicit temperature config with user-provided litellm_kwargs.
+        User-provided kwargs override explicit config.
+
+        Returns:
+            Dictionary with all LiteLLM parameters for unpacking
+        """
+        base = {"temperature": self.temperature}
+        # User-provided kwargs override base config
+        base.update(self.litellm_kwargs)
+        return base
+
+    def get_mlx_lm_cli_args(self) -> List[str]:
+        """Get CLI arguments for MLX-LM training.
+
+        Converts mlx_lm_kwargs dict to command-line arguments.
+        Example: {"warmup_steps": 100} -> ["--warmup-steps", "100"]
+
+        Returns:
+            List of CLI argument strings
+        """
+        args = []
+        for key, value in self.mlx_lm_kwargs.items():
+            # Convert underscore to hyphen (Python style to CLI style)
+            cli_key = f"--{key.replace('_', '-')}"
+            if isinstance(value, bool):
+                if value:  # Only add flag if True
+                    args.append(cli_key)
+            else:
+                args.extend([cli_key, str(value)])
+        return args
+
     @field_validator("seed")
     @classmethod
     def validate_seed_format(cls, v: List[Dict[str, str]]) -> List[Dict[str, str]]:
@@ -149,6 +266,16 @@ class DistillationConfig(BaseModel):
             # Lenient check - just ensure it's not obviously wrong
             pass
 
+        return v
+
+    @field_validator("memory_hard_limit_gb")
+    @classmethod
+    def validate_memory_limits(cls, v: int, info) -> int:
+        """Ensure hard limit >= max memory."""
+        if info.data.get("max_memory_gb") and v < info.data["max_memory_gb"]:
+            raise ValueError(
+                f"memory_hard_limit_gb ({v}) must be >= max_memory_gb ({info.data['max_memory_gb']})"
+            )
         return v
 
     def model_post_init(self, __context) -> None:
