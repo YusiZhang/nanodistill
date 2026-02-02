@@ -18,7 +18,15 @@ If you want a small, local model that does one thing well from a handful of exam
 
 [Quick Start](docs/QUICK_START.md) · [Workflow](docs/WORKFLOW.md) · [Model Setup](docs/MODEL_SETUP.md) · [Contributing](docs/CONTRIBUTING.md)
 
-Preferred setup: `uv pip install -e .` (or `pip install -e .`). Runs on **macOS with Apple Silicon (M1/M2/M3+)**, 16GB+ RAM. Needs an API key for the teacher: [Anthropic](https://console.anthropic.com) for Claude; other teachers (OpenAI, Google, Ollama) work via LiteLLM. New install? Start here: [Getting started](docs/QUICK_START.md)
+Preferred setup: `uv pip install -e .` (or `pip install -e .`). Runs on **macOS with Apple Silicon (M1/M2/M3+)**, 16GB+ RAM.
+
+**Required:** API key for the teacher model:
+- [Anthropic API key](https://console.anthropic.com) for Claude (default)
+- Or [OpenAI](https://platform.openai.com), [Google](https://ai.google.dev), Ollama, etc. via LiteLLM
+
+**If using gated models:** [HuggingFace token](https://huggingface.co/settings/tokens) for downloading student models (e.g., Meta's Llama models). Set via `HF_TOKEN` environment variable or pass to `distill()`.
+
+New install? Start here: [Getting started](docs/QUICK_START.md)
 
 ---
 
@@ -125,8 +133,17 @@ All of these are optional and can be tuned via kwargs:
 
 ### Environment Variables
 
-- `ANTHROPIC_API_KEY` - Required for Claude teacher (get from [console.anthropic.com](https://console.anthropic.com))
-- `HF_HUB_TIMEOUT` - Optional, timeout for model downloads (default: 300s)
+**Teacher Model:**
+- `ANTHROPIC_API_KEY` - Required for Claude (get from [console.anthropic.com](https://console.anthropic.com))
+- `OPENAI_API_KEY` - Optional, for GPT models
+- `GOOGLE_API_KEY` - Optional, for Gemini models
+
+**Student Model (HuggingFace):**
+- `HF_TOKEN` - Required if using gated models like Meta's Llama (get from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)). Set via:
+  ```bash
+  export HF_TOKEN='hf_...'
+  ```
+  Or pass to `distill()`: `distill(..., huggingface_token='hf_...')`
 
 ### Examples
 
@@ -187,11 +204,17 @@ Per run, under `{output_dir}/{name}/`:
 
 ## Troubleshooting
 
-**"ANTHROPIC_API_KEY not set"** -Export your key: `export ANTHROPIC_API_KEY='sk-ant-...'`
+**"ANTHROPIC_API_KEY not set"** - Export your key: `export ANTHROPIC_API_KEY='sk-ant-...'`
 
-**Out of memory** -Lower `augment_factor` (e.g. 20–30), use a smaller student, or close other GPU-heavy apps.
+**"Access denied" or "gated model" error** - You need a HuggingFace token for gated models like Llama:
+```bash
+export HF_TOKEN='hf_...'  # Get from https://huggingface.co/settings/tokens
+# OR accept the model license: https://huggingface.co/meta-llama/Llama-2-7b-hf
+```
 
-**MLX** -Requires macOS 13+. See [MLX](https://github.com/ml-explore/mlx).
+**Out of memory** - Lower `augment_factor` (e.g. 20–30), use a smaller student, or close other GPU-heavy apps.
+
+**MLX** - Requires macOS 13+. See [MLX](https://github.com/ml-explore/mlx).
 
 ---
 
