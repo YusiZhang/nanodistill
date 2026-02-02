@@ -90,20 +90,88 @@ You can swap the teacher (Claude, GPT-4o, Gemini, Ollama via LiteLLM) and the st
 
 ## Configuration
 
-**Environment**
+NanoDistill works out of the box with sensible defaults. Everything is optional—just provide your 10+ examples and task instruction, and training starts immediately.
 
-- `ANTHROPIC_API_KEY` -Required for default Claude teacher
-- `HF_HUB_TIMEOUT` -Optional (default 300s)
+### Essential Parameters
 
-**Key parameters**
+- `name` - Run identifier (used in output directory)
+- `seed` - Training examples: List of `{"input": "...", "output": "..."}` dicts, or path to JSON/JSONL/CSV file
+- `instruction` - System prompt / task description for teacher and student
+- `teacher` - Teacher model (default: `"claude-sonnet-4-5"`, any LiteLLM model works)
+- `student` - Student model (default: `"mlx-community/Llama-3-8B-Instruct-4bit"`, any MLX model)
 
-- `name` -Run identifier
-- `seed` -Path to JSON/JSONL/CSV or list of `{"input", "output"}` (recommend 10+ examples)
-- `instruction` -System/task description
-- `teacher` -Teacher model (default: `claude-sonnet-4-5`)
-- `student` -Student model (default: `mlx-community/Llama-3-8B-Instruct-4bit`)
-- `augment_factor` -Data multiplier (default: 50)
-- `output_dir` -Output directory (default: `./outputs`)
+### Advanced Parameters (Optional)
+
+All of these are optional and can be tuned via kwargs:
+
+**Training Parameters:**
+- `batch_size` (default: 1) - Batch size (1-32, reduce for memory-constrained systems)
+- `learning_rate` (default: 1e-5) - Learning rate
+- `num_train_epochs` (default: 1) - Training epochs
+- `max_seq_length` (default: 256) - Maximum sequence length (32-2048)
+
+**Model Parameters (v0.2.0+):**
+- `lora_rank` (default: 8) - LoRA adapter rank (1-64, higher = more parameters)
+- `lora_layers` (default: 4) - Number of layers for LoRA (1-32)
+- `temperature` (default: 0.7) - Sampling temperature for synthesis (0.0-2.0)
+
+**Data & System (v0.2.0+):**
+- `augment_factor` (default: 50) - Data multiplication factor (1-500)
+- `output_dir` (default: "./outputs") - Output directory
+- `val_split` (default: 0.2) - Validation split ratio
+- `max_memory_gb` (auto-detect, capped at 12) - Maximum RAM to use
+- `memory_hard_limit_gb` (auto-detect, capped at 12) - Hard memory limit
+- `cpu_capacity_percent` (default: 0.8) - CPU threshold before pause
+
+### Environment Variables
+
+- `ANTHROPIC_API_KEY` - Required for Claude teacher (get from [console.anthropic.com](https://console.anthropic.com))
+- `HF_HUB_TIMEOUT` - Optional, timeout for model downloads (default: 300s)
+
+### Examples
+
+**Minimal (works immediately):**
+```python
+from nanodistill import distill
+
+result = distill(
+    name="my-model",
+    seed=[
+        {"input": "example 1", "output": "answer 1"},
+        {"input": "example 2", "output": "answer 2"},
+        # ... 10+ examples
+    ],
+    instruction="Your task description here",
+)
+```
+
+**Memory-constrained M1 MacBook:**
+```python
+result = distill(
+    name="m1-model",
+    seed=[...],
+    instruction="...",
+    batch_size=1,
+    max_seq_length=256,
+    lora_rank=4,
+)
+```
+
+**High-performance M3 Pro/Max:**
+```python
+result = distill(
+    name="pro-model",
+    seed=[...],
+    instruction="...",
+    batch_size=4,
+    max_seq_length=1024,
+    lora_rank=16,
+    lora_layers=8,
+    num_train_epochs=3,
+)
+```
+
+For more examples and detailed guidance, see [**Configuration Reference**](docs/CONFIGURATION.md) and [**Configuration Examples**](examples/configuration.py).
 
 ---
 
