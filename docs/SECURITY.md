@@ -6,17 +6,15 @@ We take security seriously. If you discover a security vulnerability in NanoDist
 
 ### Reporting Process
 
-1. **Do NOT open a public GitHub issue** for security vulnerabilities
-
-2. **Email the maintainers** at: security@github.com (replace with actual contact if you set one up)
-   - Include a clear description of the vulnerability
+1. **Open a GitHub issue** to report the vulnerability. Please include:
+   - A clear description of the vulnerability
    - Steps to reproduce (if applicable)
    - Potential impact
    - Suggested fix (if you have one)
 
-3. **Wait for acknowledgment** - We aim to acknowledge vulnerability reports within 48 hours
+2. **Wait for acknowledgment** - We aim to acknowledge vulnerability reports within 48 hours
 
-4. **Coordinate disclosure** - We'll work with you to:
+3. **Coordinate disclosure** - We'll work with you to:
    - Understand and confirm the vulnerability
    - Develop and test a fix
    - Plan a responsible disclosure timeline
