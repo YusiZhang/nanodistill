@@ -4,10 +4,11 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from datasets import Dataset
 
+from ..config import DistillationConfig
 from ..utils.errors import TrainingError
 
 
@@ -22,7 +23,7 @@ class MLXTrainer:
     def __init__(
         self,
         student_model: str,
-        config: dict,
+        config: DistillationConfig,
     ):
         """Initialize MLX trainer.
 
@@ -58,10 +59,10 @@ class MLXTrainer:
 
         self.student_model = student_model
         self.config = config
-        self.model = None
-        self.tokenizer = None
-        self.lora_params = {}
-        self.metrics = {}
+        self.model: Any = None
+        self.tokenizer: Any = None
+        self.lora_params: Dict[str, Any] = {}
+        self.metrics: Dict[str, Any] = {}
 
     def train(
         self,
@@ -133,6 +134,9 @@ class MLXTrainer:
             List of tokenized training examples
         """
         formatted_data = []
+
+        if self.tokenizer is None:
+            raise TrainingError("Tokenizer not loaded; call _load_model first.")
 
         for example in dataset:
             text = f"""Input: {example['input']}
@@ -459,6 +463,9 @@ This model was fine-tuned using knowledge distillation:
         Returns:
             Dictionary of evaluation metrics
         """
+        if self.model is None:
+            raise TrainingError("Model not loaded; call train() first.")
+
         eval_data = self._prepare_dataset(eval_dataset)
         total_loss = 0.0
 

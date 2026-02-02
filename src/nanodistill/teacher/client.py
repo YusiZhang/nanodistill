@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Type
+from typing import TYPE_CHECKING, Dict, List, Optional, Type, cast
 
 import instructor
 from litellm import completion
@@ -179,7 +179,7 @@ class TeacherClient:
                 api_base=self.api_base,
             )
 
-            return response
+            return cast(TaskPolicy, response)
 
         except Exception as e:
             raise TeacherAPIError(f"Failed to extract task policy: {str(e)}") from e
@@ -301,7 +301,7 @@ class TeacherClient:
             List of generated examples with filtered fields matching schema
         """
         logger = logging.getLogger(__name__)
-        examples = []
+        examples: List[Dict[str, str]] = []
         valid_count = 0
 
         prompt = build_synthetic_generation_prompt(policy, num_examples, instruction, seed_count)
