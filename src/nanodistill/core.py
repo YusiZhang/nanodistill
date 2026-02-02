@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Type, Union
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -44,6 +45,7 @@ def distill(
     student: str = "mlx-community/Llama-3-8B-Instruct-4bit",
     augment_factor: int = 50,
     output_dir: str = "./outputs",
+    response_model: Optional[Type[BaseModel]] = None,
     **kwargs,
 ) -> DistillationResult:
     """Convert seed examples into a reasoning-capable small language model.
@@ -73,6 +75,9 @@ def distill(
                        Default: 50 (10 seeds × 50 = 500 training examples)
         output_dir: Directory to save model and outputs.
                    Default: "./outputs"
+        response_model: Optional Pydantic model to enforce schema on synthetic outputs.
+                       When provided, uses instructor for structured generation
+                       and filters extra fields automatically.
         **kwargs: Additional configuration options
 
     Returns:
@@ -175,6 +180,7 @@ def distill(
                     cot_traces,
                     config.instruction,
                     config.augment_factor,
+                    response_model=response_model,
                 )
                 progress.update(task2, completed=True)
                 console.print(f"✓ Amplified to {len(amplified_traces)} training examples\n")

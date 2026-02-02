@@ -1,13 +1,16 @@
 """Teacher model client using LiteLLM for API abstraction."""
 
 import json
+import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Type
 
 import instructor
 from litellm import completion
+from pydantic import BaseModel
 
 from ..utils.errors import TeacherAPIError, validate_teacher_api_key
+from ..utils.schema import filter_extra_fields, validate_against_schema
 from .prompts import (
     COT_SYSTEM_PROMPT,
     POLICY_EXTRACTION_SYSTEM_PROMPT,
@@ -183,8 +186,54 @@ class TeacherClient:
         num_examples: int,
         instruction: str,
         seed_count: int,
+        response_model: Optional[Type[BaseModel]] = None,
     ) -> List[Dict[str, str]]:
         """Generate synthetic examples matching the task policy.
+
+        When response_model is provided, uses instructor for structured output
+        with automatic field filtering. Otherwise uses text parsing.
+
+        Args:
+            policy: Task policy to constrain generation
+            num_examples: Number of examples to generate
+            instruction: Original task instruction
+            seed_count: Number of original seed examples
+            response_model: Optional Pydantic model to enforce schema on output
+
+        Returns:
+            List of generated examples with 'input' and 'output' fields.
+            When response_model provided, output fields are JSON strings matching schema.
+
+        Raises:
+            TeacherAPIError: If API call fails or parsing fails
+        """
+        try:
+            # Use schema-based generation if response_model provided
+            if response_model is not None:
+                return self._generate_with_schema(
+                    policy, num_examples, instruction, seed_count, response_model
+                )
+
+            # Fallback to text parsing for backward compatibility
+            return self._generate_with_text_parsing(
+                policy, num_examples, instruction, seed_count
+            )
+
+        except TeacherAPIError:
+            raise
+        except Exception as e:
+            raise TeacherAPIError(
+                f"Failed to generate synthetic examples: {str(e)}"
+            ) from e
+
+    def _generate_with_text_parsing(
+        self,
+        policy: TaskPolicy,
+        num_examples: int,
+        instruction: str,
+        seed_count: int,
+    ) -> List[Dict[str, str]]:
+        """Generate using raw text output and manual parsing (backward compatible).
 
         Args:
             policy: Task policy to constrain generation
@@ -194,19 +243,73 @@ class TeacherClient:
 
         Returns:
             List of generated examples with 'input' and 'output' fields
-
-        Raises:
-            TeacherAPIError: If API call fails or parsing fails
         """
-        try:
-            prompt = build_synthetic_generation_prompt(
-                policy, num_examples, instruction, seed_count
+        prompt = build_synthetic_generation_prompt(
+            policy, num_examples, instruction, seed_count
+        )
+
+        # For synthetic generation, we use raw text output and parse it
+        # (More flexible than structured output for list generation)
+        response = completion(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYNTHETIC_GENERATION_SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,  # Some diversity
+            max_retries=self.max_retries,
+            api_base=self.api_base,
+        )
+
+        # Parse response text to extract examples
+        response_text = response.choices[0].message.content
+
+        examples = self._parse_synthetic_examples(response_text)
+
+        # Verify we got enough examples
+        if len(examples) < num_examples:
+            raise TeacherAPIError(
+                f"Generated only {len(examples)} examples, expected {num_examples}"
             )
 
-            # For synthetic generation, we use raw text output and parse it
-            # (More flexible than structured output for list generation)
-            response = completion(
+        return examples[:num_examples]
+
+    def _generate_with_schema(
+        self,
+        policy: TaskPolicy,
+        num_examples: int,
+        instruction: str,
+        seed_count: int,
+        response_model: Type[BaseModel],
+    ) -> List[Dict[str, str]]:
+        """Generate using instructor with structured output and schema enforcement.
+
+        Args:
+            policy: Task policy to constrain generation
+            num_examples: Number of examples to generate
+            instruction: Original task instruction
+            seed_count: Number of original seed examples
+            response_model: Pydantic model to enforce schema
+
+        Returns:
+            List of generated examples with filtered fields matching schema
+        """
+        logger = logging.getLogger(__name__)
+        examples = []
+        valid_count = 0
+
+        prompt = build_synthetic_generation_prompt(
+            policy, num_examples, instruction, seed_count
+        )
+
+        try:
+            # Use instructor for structured output
+            response = self.client.chat.completions.create(
                 model=self.model,
+                response_model=response_model,
                 messages=[
                     {
                         "role": "system",
@@ -214,20 +317,65 @@ class TeacherClient:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,  # Some diversity
+                temperature=0.7,
                 max_retries=self.max_retries,
                 api_base=self.api_base,
             )
 
-            # Parse response text to extract examples
-            response_text = response.choices[0].message.content
+            # Handle both single instance and list responses
+            instances = response if isinstance(response, list) else [response]
 
-            examples = self._parse_synthetic_examples(response_text)
+            for instance in instances:
+                if len(examples) >= num_examples:
+                    break
 
-            # Verify we got enough examples
+                try:
+                    # Convert Pydantic instance to dict
+                    output_dict = instance.model_dump(mode='json')
+
+                    # Filter extra fields
+                    filtered_dict = filter_extra_fields(
+                        output_dict,
+                        response_model,
+                        logger
+                    )
+
+                    # Reconstruct training example format
+                    # Note: output_dict may have "input" field from the model
+                    # If not, we'll use empty string
+                    input_text = output_dict.get("input", "")
+                    example = {
+                        "input": input_text,
+                        "output": json.dumps(filtered_dict),
+                    }
+
+                    # Validate against schema
+                    is_valid, error = validate_against_schema(
+                        filtered_dict,
+                        response_model,
+                        logger
+                    )
+
+                    if is_valid:
+                        examples.append(example)
+                        valid_count += 1
+                    else:
+                        logger.warning(f"Skipped invalid example: {error}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to process instance: {str(e)}")
+                    continue
+
+            # Log generation summary
+            logger.info(
+                f"Generated {valid_count}/{num_examples} valid schema-compliant examples"
+            )
+
+            # Verify we got enough valid examples
             if len(examples) < num_examples:
                 raise TeacherAPIError(
-                    f"Generated only {len(examples)} examples, expected {num_examples}"
+                    f"Generated only {len(examples)} valid schema-compliant examples, "
+                    f"expected {num_examples}"
                 )
 
             return examples[:num_examples]
@@ -235,9 +383,13 @@ class TeacherClient:
         except TeacherAPIError:
             raise
         except Exception as e:
-            raise TeacherAPIError(
-                f"Failed to generate synthetic examples: {str(e)}"
-            ) from e
+            logger.warning(
+                f"Schema-based generation failed, falling back to text parsing: {str(e)}"
+            )
+            # Fallback to text parsing
+            return self._generate_with_text_parsing(
+                policy, num_examples, instruction, seed_count
+            )
 
     def _parse_synthetic_examples(
         self, response_text: str

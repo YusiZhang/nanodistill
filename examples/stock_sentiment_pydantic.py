@@ -402,7 +402,11 @@ def query_stock_sentiment(
 
 
 def run_distillation(output_dir: str = "./outputs") -> DistillationResult:
-    """Run distillation for stock sentiment with Qwen2.5-7B-Instruct-4bit."""
+    """Run distillation for stock sentiment with Qwen2.5-7B-Instruct-4bit.
+
+    Uses StockAnalysis Pydantic model to enforce schema on synthetic data generation,
+    ensuring all amplified examples match the expected output format exactly.
+    """
     return distill(
         name="stock-sentiment-v1",
         seed=seed_data,
@@ -411,6 +415,7 @@ def run_distillation(output_dir: str = "./outputs") -> DistillationResult:
         student="mlx-community/Qwen2.5-7B-Instruct-4bit",
         augment_factor=5,
         output_dir=output_dir,
+        response_model=StockAnalysis,  # Enforce schema on synthetic data
         learning_rate=1e-5,  # Much lower to prevent divergence
         num_train_epochs=1,  # Reduce to 1 epoch
         batch_size=1,  # Minimal batch size for memory safety

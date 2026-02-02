@@ -4,7 +4,9 @@ Orchestrates policy extraction and synthetic example generation to expand
 a small seed dataset into a large training dataset.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Type
+
+from pydantic import BaseModel
 
 from ..teacher.client import TeacherClient
 from ..teacher.schemas import TaskPolicy, ThinkingTrace
@@ -35,6 +37,7 @@ class AmplificationPipeline:
         cot_traces: List[ThinkingTrace],
         instruction: str,
         augment_factor: int,
+        response_model: Optional[Type[BaseModel]] = None,
     ) -> List[ThinkingTrace]:
         """Amplify seed data into larger training dataset.
 
@@ -43,6 +46,7 @@ class AmplificationPipeline:
             cot_traces: Generated Chain-of-Thought traces for seeds
             instruction: Task instruction / system prompt
             augment_factor: Target multiplication factor (e.g., 50x)
+            response_model: Optional Pydantic model to enforce schema on synthetic outputs
 
         Returns:
             List of original + synthetic ThinkingTrace objects
@@ -59,7 +63,7 @@ class AmplificationPipeline:
         # Phase 2: Generate synthetic examples
         num_synthetic = len(seed_examples) * (augment_factor - 1)
         synthetic_examples = self._generate_synthetic_examples(
-            policy, num_synthetic, instruction, len(seed_examples)
+            policy, num_synthetic, instruction, len(seed_examples), response_model
         )
 
         # Convert synthetic examples to ThinkingTrace (generate CoT for each)
@@ -98,6 +102,7 @@ class AmplificationPipeline:
         num_examples: int,
         instruction: str,
         seed_count: int,
+        response_model: Optional[Type[BaseModel]] = None,
     ) -> List[Dict[str, str]]:
         """Generate synthetic examples matching the policy.
 
@@ -106,12 +111,13 @@ class AmplificationPipeline:
             num_examples: Number of examples to generate
             instruction: Task instruction
             seed_count: Number of original seed examples
+            response_model: Optional Pydantic model to enforce schema
 
         Returns:
             List of generated examples with 'input' and 'output' fields
         """
         examples = self.teacher.generate_synthetic_examples(
-            policy, num_examples, instruction, seed_count
+            policy, num_examples, instruction, seed_count, response_model=response_model
         )
         return examples
 
