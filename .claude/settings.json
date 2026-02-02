@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(tree:*)",
+      "Bash(python3:*)",
+      "Bash(pip install:*)",
+      "Bash(uv run python:*)",
+      "Bash(set -a)",
+      "Bash(source .env)",
+      "Bash(set +a)",
+      "Bash(uv pip install:*)",
+      "Bash(tee:*)",
+      "Bash(du:*)",
+      "Bash(find:*)",
+      "Bash(mlx-lm train:*)",
+      "Bash(python -m mlx_lm:*)",
+      "Bash(python:*)",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ]
+  },
+  "autoApprove": {
+    "reads": true,
+    "writes": true,
+    "edits": true,
+    "creates": false,
+    "deletes": false,
+    "bash": false
+  },
+  "notifications": {
+    "onBashCommand": false,
+    "onFileWrite": false,
+    "onFileRead": false,
+    "onTaskCompletion": true
+  }
+}
