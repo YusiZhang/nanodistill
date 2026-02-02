@@ -174,10 +174,10 @@ Contributions are welcome. See CONTRIBUTING.md (coming soon).
 ## Citation
 
 ```bibtex
-@software{nanodistill2025,
+@software{nanodistill2026,
   title = {NanoDistill: Knowledge Distillation for Small Language Models},
   author = {NanoDistill Contributors},
-  year = {2025},
-  url = {https://github.com/yourusername/nanodistill}
+  year = {2026},
+  url = {https://github.com/viditaggarwal/nanodistill}
 }
 ```
