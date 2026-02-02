@@ -1,195 +1,177 @@
-# NanoDistill
+# NanoDistill - Knowledge distillation for small language models
 
-Convert 10 examples + instruction into a locally-runnable, reasoning-capable small language model.
+<p align="center">
+  <strong>10 examples. One API key. Your own model.</strong>
+</p>
 
-## Core Promise
+<p align="center">
+  <img src="https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge" alt="build" />
+  <img src="https://img.shields.io/badge/tests-passing-brightgreen?style=for-the-badge" alt="tests" />
+  <img src="https://img.shields.io/badge/python-3.9+-green?style=for-the-badge" alt="python" />
+  <img src="https://img.shields.io/badge/platform-Apple%20Silicon-green?style=for-the-badge" alt="platform" />
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="license" />
+</p>
 
-**Give us 10 examples and an API key. We give you a locally runnable, reasoning-capable model.**
+**NanoDistill** is a _pipeline_ that turns a small set of seed examples and a task instruction into a custom small language model you run locally. You give it around 10 input/output pairs and an API key; it uses a teacher model to generate reasoning traces and hundreds of synthetic examples, then fine-tunes a student model (e.g. Llama 3 8B) with MLX on Apple Silicon. The result is a model that follows your task without ongoing API calls.
 
-## Quick Start
+If you want a small, local model that does one thing well from a handful of examples, this is it.
 
-### Installation
+[Quick Start](docs/QUICK_START.md) · [Workflow](docs/WORKFLOW.md) · [Model Setup](docs/MODEL_SETUP.md) · [Implementation Plan](docs/IMPLEMENTATION_PLAN.md)
+
+Preferred setup: `uv pip install -e .` (or `pip install -e .`). Runs on **macOS with Apple Silicon (M1/M2/M3+)**, 16GB+ RAM. Needs an API key for the teacher: [Anthropic](https://console.anthropic.com) for Claude; other teachers (OpenAI, Google, Ollama) work via LiteLLM. New install? Start here: [Getting started](docs/QUICK_START.md)
+
+---
+
+## Examples
+
+### Install and run
 
 ```bash
-pip install -e .
-```
-
-### Requirements
-
-- **Python**: 3.9+
-- **Hardware**: Mac M1/M2/M3+ (Apple Silicon) with 16GB+ RAM
-- **API Key**: Anthropic API key (get from https://console.anthropic.com)
-
-### 5-Minute Walkthrough
-
-```bash
-# 1. Set your API key
 export ANTHROPIC_API_KEY='sk-ant-...'
+```
 
-# 2. Create seed data (seeds.json)
-cat > seeds.json << 'EOF'
-[
-  {"input": "What is 2+2?", "output": "4"},
-  {"input": "What is 3+5?", "output": "8"},
-  {"input": "What is 10-4?", "output": "6"},
-  ...10+ examples
-]
-EOF
-
-# 3. Run distillation
-python -c "
+```python
 from nanodistill import distill
+
 result = distill(
-    name='math-tutor',
-    seed='seeds.json',
-    instruction='You are a helpful math tutor.',
-    teacher='claude-sonnet-4-5'
+    name='stock-sentiment',
+    seed='seeds.json',  # list of {"input": "...", "output": "..."}
+    instruction='You analyze financial news and headlines. Output sentiment (bullish/bearish/neutral) and brief reasoning.',
+    teacher='claude-sonnet-4-5',
 )
-print(f'✅ Model: {result.model_path}')
-"
+print(f'Model saved to: {result.model_path}')
+```
 
-# 4. Test the model
-python -c "
+### Seed file (`seeds.json`)
+
+```json
+[
+  {"input": "Tesla down 8% today. Elon says 'best quarter ever coming'.", "output": "{\"sentiment\": \"bearish\", \"reasoning\": \"Price drop and skeptical tone outweigh positive statement.\"}"},
+  {"input": "AAPL beats earnings by 12% but warns of supply chain issues. Stock flat after-hours.", "output": "{\"sentiment\": \"neutral\", \"reasoning\": \"Strong beat offset by guidance; flat reaction suggests mixed view.\"}"},
+  {"input": "NVDA 200% YoY growth. IV crush post-earnings, premium sellers loving it.", "output": "{\"sentiment\": \"bullish\", \"reasoning\": \"Strong fundamentals; IV crush reflects reduced uncertainty.\"}"}
+]
+```
+
+### Run the model locally
+
+```python
 from mlx_lm import load, generate
-model, tokenizer = load('./outputs/math-tutor/model')
-response = generate(model, tokenizer, 'What is 7+8?', max_tokens=100)
+
+model, tokenizer = load('./outputs/stock-sentiment/model')
+response = generate(model, tokenizer, 'META announces layoffs affecting 15% of staff.', max_tokens=150)
 print(response)
-"
 ```
 
-### How It Works
+### Pipeline in one picture
 
 ```
-Your 10 Examples
+Your 10 examples
     ↓
     ├→ Generate reasoning with Claude
     ├→ Extract task pattern
-    ├→ Create 490 synthetic examples
-    └→ Fine-tune Llama-3-8B
+    ├→ Create hundreds of synthetic examples
+    └→ Fine-tune Llama-3-8B (MLX)
     ↓
-Locally-runnable Model ✅
+Locally runnable model
 ```
 
-## How It Works
+---
 
-NanoDistill transforms your seed examples through 4 stages:
+## How it works
 
-1. **🎓 Policy Extraction** - Analyzes seed data to extract the underlying task pattern
-2. **🔄 Synthetic Generation** - Uses Claude to generate diverse new examples matching the pattern
-3. **📚 Data Amplification** - Converts examples into Chain-of-Thought training data
-4. **🔥 Model Fine-tuning** - Trains student model on Apple Silicon using MLX-LM
+1. **Policy extraction** - Infers the task pattern from your seed data and optional Chain-of-Thought traces.
+2. **Synthetic generation** - Uses the teacher (e.g. Claude) to produce many new examples that match the pattern.
+3. **Data amplification** - Turns seed + synthetic examples into training data (optionally with CoT).
+4. **Fine-tuning** - Trains a student model on Apple Silicon with MLX-LM (LoRA).
 
-## Documentation
+You can swap the teacher (Claude, GPT-4o, Gemini, Ollama via LiteLLM) and the student (e.g. different MLX community models). Optional Pydantic `response_model` support lets you distill structured outputs.
 
-- **[Quick Start Guide](docs/QUICK_START.md)** - Step-by-step from seed data to model
-- **[Complete Workflow](docs/WORKFLOW.md)** - Detailed visual guide of each stage
-- **[Model Setup & Inference](docs/MODEL_SETUP.md)** - How to download, train, and use models
-- **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - Technical architecture details
+---
 
 ## Configuration
 
-### Environment Variables
+**Environment**
 
-- `ANTHROPIC_API_KEY` - Required for Claude teacher model (get from https://console.anthropic.com)
-- `HF_HUB_TIMEOUT` - Optional: increase if slow internet (default: 300s)
+- `ANTHROPIC_API_KEY` -Required for default Claude teacher
+- `HF_HUB_TIMEOUT` -Optional (default 300s)
 
-### Configuration Parameters
+**Key parameters**
 
-- `name` - Identifier for this distillation run
-- `seed` - Examples with `input` and `output` fields (min 1, recommend 10+)
-- `instruction` - System prompt describing the task
-- `teacher` - Teacher model (default: "claude-sonnet-4-5")
-- `student` - Student model (default: "mlx-community/Llama-3-8B-Instruct-4bit")
-- `augment_factor` - Multiply seed data by this factor (default: 50)
-- `output_dir` - Where to save outputs (default: "./outputs")
+- `name` -Run identifier
+- `seed` -Path to JSON/JSONL/CSV or list of `{"input", "output"}` (recommend 10+ examples)
+- `instruction` -System/task description
+- `teacher` -Teacher model (default: `claude-sonnet-4-5`)
+- `student` -Student model (default: `mlx-community/Llama-3-8B-Instruct-4bit`)
+- `augment_factor` -Data multiplier (default: 50)
+- `output_dir` -Output directory (default: `./outputs`)
+
+---
 
 ## Output
 
-Each distillation run creates:
+Per run, under `{output_dir}/{name}/`:
 
-- `{output_dir}/{name}/model/` - Fine-tuned model (MLX format)
-- `{output_dir}/{name}/model.gguf` - Quantized model for inference
+- `model/` -Fine-tuned model (MLX)
+- `model.gguf` -Quantized model
 - Training logs and metrics
+
+---
 
 ## Troubleshooting
 
-### API Key Issues
+**"ANTHROPIC_API_KEY not set"** -Export your key: `export ANTHROPIC_API_KEY='sk-ant-...'`
 
-```
-❌ ANTHROPIC_API_KEY not set
-```
+**Out of memory** -Lower `augment_factor` (e.g. 20–30), use a smaller student, or close other GPU-heavy apps.
 
-Set your API key:
+**MLX** -Requires macOS 13+. See [MLX](https://github.com/ml-explore/mlx).
 
-```bash
-export ANTHROPIC_API_KEY='sk-ant-...'
-```
-
-### Memory Issues
-
-If you encounter out-of-memory errors:
-- Reduce `augment_factor` to 20-30
-- Use a smaller student model
-- Ensure no other GPU-heavy applications are running
-
-### MLX Installation
-
-MLX requires macOS 13+. For more info: https://github.com/ml-explore/mlx
+---
 
 ## Development
 
 ```bash
-# Install with dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
+uv pip install -e ".[dev]"
 pytest
-
-# Format code
 black src/
-
-# Type checking
 mypy src/
 ```
 
-## Architecture
+**Layout**
 
 ```
 src/nanodistill/
-├── config.py           # Configuration validation
-├── core.py             # Main orchestrator
-├── teacher/            # Claude API integration
-├── amplifier/          # Policy extraction & synthetic generation
-├── distiller/          # MLX-LM training
-├── data/               # Dataset utilities
-└── utils/              # Error handling & logging
+├── config.py       # Configuration
+├── core.py         # Orchestrator
+├── teacher/        # Teacher API (LiteLLM)
+├── amplifier/      # Policy + synthetic data
+├── distiller/      # MLX-LM training
+├── data/           # Loaders and formatters
+└── utils/          # Errors and helpers
 ```
+
+---
 
 ## Roadmap
 
-**Current (Phase 1)**:
-- ✅ MLX-LM training on Apple Silicon
-- ✅ Claude Sonnet as teacher
-- ✅ Policy-based synthetic generation
+**Current:** MLX-LM on Apple Silicon, Claude Sonnet as default teacher, policy-based synthetic generation.
 
-**Post-MVP**:
-- Cross-platform support (Unsloth for Linux/Windows)
-- Multiple teacher model options (GPT-4o, Gemini, Ollama)
-- Advanced amplification strategies
-- Model evaluation harness
-- CLI interface
+**Planned:** Cross-platform (e.g. Unsloth), more teachers (GPT-4o, Gemini, Ollama), richer amplification and evaluation, CLI.
+
+---
 
 ## License
 
 MIT
 
+---
+
 ## Contributing
 
-Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) (coming soon).
+Contributions are welcome. See CONTRIBUTING.md (coming soon).
+
+---
 
 ## Citation
-
-If you use NanoDistill in your research, please cite:
 
 ```bibtex
 @software{nanodistill2025,
