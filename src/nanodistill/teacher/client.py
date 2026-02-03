@@ -468,16 +468,34 @@ class TeacherClient:
 
                 input_text = lines[0].strip()
 
-                # Find output
+                # Find output - handle multi-line outputs
                 output_text = ""
-                for line in lines[1:]:
+                for idx, line in enumerate(lines[1:], start=1):
                     if re.match(r"^\s*(?:-\s*)?(?:Output|Answer|Response):", line, re.IGNORECASE):
-                        output_text = re.sub(
+                        # Extract text after the Output: marker on the same line
+                        same_line_text = re.sub(
                             r"^\s*(?:-\s*)?(?:Output|Answer|Response):\s*",
                             "",
                             line,
                             flags=re.IGNORECASE,
                         ).strip()
+
+                        if same_line_text:
+                            # Output is on the same line
+                            output_text = same_line_text
+                        else:
+                            # Output starts on next line - collect until next example
+                            output_lines = []
+                            for subsequent_line in lines[idx + 1 :]:
+                                # Stop at next example marker
+                                if re.match(
+                                    r"^\s*(?:\*\*)?Example\s*\d+|^---+$|^\s*(?:-\s*)?(?:Input|Question|Prompt):",
+                                    subsequent_line,
+                                    re.IGNORECASE,
+                                ):
+                                    break
+                                output_lines.append(subsequent_line)
+                            output_text = "\n".join(output_lines).strip()
                         break
 
                 if input_text and output_text and len(input_text) > 5:
