@@ -26,7 +26,7 @@ result = distill(
         "and then provide the final answer."
     ),
     teacher="claude-sonnet-4-5",  # Uses ANTHROPIC_API_KEY
-    student="mlx-community/Llama-3-8B-Instruct-4bit",
+    student="mlx-community/Meta-Llama-3-8B-Instruct-4bit",
     augment_factor=50,  # 10 seeds × 50 = 500 training examples
     output_dir="./outputs",
 )
