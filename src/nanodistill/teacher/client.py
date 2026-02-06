@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Type, cast
 
 import instructor
 from litellm import completion
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
 from ..utils.errors import TeacherAPIError, validate_teacher_api_key
 from ..utils.schema import filter_extra_fields, validate_against_schema
@@ -23,6 +23,24 @@ from .schemas import TaskPolicy, ThinkingTrace
 
 if TYPE_CHECKING:
     from ..config import DistillationConfig
+
+
+def _create_synthetic_example_wrapper(output_model: Type[BaseModel]) -> Type[BaseModel]:
+    """Dynamically create a wrapper model for synthetic example generation.
+
+    Args:
+        output_model: The Pydantic model for the output structure
+
+    Returns:
+        A new Pydantic model with 'input' (str) and 'output' (output_model) fields
+    """
+    wrapper = create_model(
+        f"SyntheticExample_{output_model.__name__}",
+        input=(str, Field(description="The input text or question to analyze")),
+        output=(output_model, Field(description="The structured output response")),
+        __base__=BaseModel,
+    )
+    return wrapper
 
 
 class TeacherClient:
@@ -73,6 +91,9 @@ class TeacherClient:
     ) -> List[ThinkingTrace]:
         """Generate Chain-of-Thought traces for seed examples.
 
+        Uses instructor with Pydantic validation to ensure structured output
+        with proper thinking/output separation.
+
         Args:
             seed_examples: List of examples with 'input' and 'output' fields
             instruction: Task instruction / system prompt
@@ -84,15 +105,16 @@ class TeacherClient:
             TeacherAPIError: If API call fails
         """
         traces = []
-        total_tokens = 0
+        logger = logging.getLogger(__name__)
 
         for i, example in enumerate(seed_examples, 1):
             try:
                 prompt = build_cot_prompt(example, instruction)
 
-                # Use raw completion and parse manually
-                response = completion(
+                # Use instructor for structured output with ThinkingTrace schema
+                trace = self.client.chat.completions.create(
                     model=self.model,
+                    response_model=ThinkingTrace,
                     messages=[
                         {"role": "system", "content": COT_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
@@ -101,40 +123,11 @@ class TeacherClient:
                     api_base=self.api_base,
                 )
 
-                # Extract response text
-                response_text = response.choices[0].message.content
+                # Ensure input matches the seed example
+                trace.input = example["input"]
 
-                # Parse thinking and output from response
-                thinking = ""
-                output = ""
-
-                # Try to extract thinking (anything before the answer)
-                if "thinking" in response_text.lower() or "work through" in response_text.lower():
-                    # Split by common answer indicators
-                    parts = re.split(
-                        r"\n(?:answer|final answer|output|json):",
-                        response_text,
-                        flags=re.IGNORECASE,
-                    )
-                    if len(parts) > 1:
-                        thinking = parts[0].strip()
-                        output = parts[1].strip()
-                    else:
-                        thinking = response_text.strip()
-                        output = response_text.strip()
-                else:
-                    # If no clear thinking section, treat whole response as output
-                    thinking = response_text.strip()
-                    output = response_text.strip()
-
-                # Extract token usage if available
-                if hasattr(response, "usage"):
-                    total_tokens += response.usage.total_tokens
-
-                trace = ThinkingTrace(
-                    input=example["input"], thinking=thinking, output=output, confidence=0.9
-                )
                 traces.append(trace)
+                logger.debug(f"Generated CoT trace {i}/{len(seed_examples)}")
 
             except Exception as e:
                 raise TeacherAPIError(
@@ -288,21 +281,24 @@ class TeacherClient:
         seed_count: int,
         response_model: Type[BaseModel],
     ) -> List[Dict[str, str]]:
-        """Generate using instructor with structured output and schema enforcement.
+        """Generate synthetic examples using instructor with automatic wrapper model.
+
+        Creates a dynamic wrapper model with 'input' and 'output' fields, where
+        'output' is constrained to the provided response_model. This ensures
+        full Pydantic validation on both input and structured output.
 
         Args:
             policy: Task policy to constrain generation
             num_examples: Number of examples to generate
             instruction: Original task instruction
             seed_count: Number of original seed examples
-            response_model: Pydantic model to enforce schema
+            response_model: Pydantic model to enforce on outputs
 
         Returns:
-            List of generated examples with filtered fields matching schema
+            List of generated examples with validated outputs
         """
         logger = logging.getLogger(__name__)
         examples: List[Dict[str, str]] = []
-        valid_count = 0
 
         prompt = build_synthetic_generation_prompt(policy, num_examples, instruction, seed_count)
 
@@ -311,11 +307,14 @@ class TeacherClient:
         if self.config:
             litellm_kwargs = self.config.get_litellm_synthesis_kwargs()
 
+        # Create wrapper model: SyntheticExample with input (str) + output (response_model)
+        wrapper_model = _create_synthetic_example_wrapper(response_model)
+
         try:
-            # Use instructor for structured output
+            # Use instructor with List[WrapperModel] to generate multiple examples
             response = self.client.chat.completions.create(
                 model=self.model,
-                response_model=response_model,
+                response_model=List[wrapper_model],
                 messages=[
                     {
                         "role": "system",
@@ -325,53 +324,39 @@ class TeacherClient:
                 ],
                 max_retries=self.max_retries,
                 api_base=self.api_base,
-                **litellm_kwargs,  # Pass temperature and any other LiteLLM params
+                **litellm_kwargs,
             )
 
-            # Handle both single instance and list responses
-            instances = response if isinstance(response, list) else [response]
-
-            for instance in instances:
+            # Extract input/output pairs from validated wrapper instances
+            for instance in response:
                 if len(examples) >= num_examples:
                     break
 
                 try:
-                    # Convert Pydantic instance to dict
-                    output_dict = instance.model_dump(mode="json")
+                    # instance.input is str, instance.output is response_model instance
+                    output_dict = instance.output.model_dump(mode="json")
 
-                    # Filter extra fields
+                    # Filter to only schema fields
                     filtered_dict = filter_extra_fields(output_dict, response_model, logger)
 
-                    # Reconstruct training example format
-                    # Note: output_dict may have "input" field from the model
-                    # If not, we'll use empty string
-                    input_text = output_dict.get("input", "")
                     example = {
-                        "input": input_text,
+                        "input": instance.input,
                         "output": json.dumps(filtered_dict),
                     }
-
-                    # Validate against schema
-                    is_valid, error = validate_against_schema(filtered_dict, response_model, logger)
-
-                    if is_valid:
-                        examples.append(example)
-                        valid_count += 1
-                    else:
-                        logger.warning(f"Skipped invalid example: {error}")
+                    examples.append(example)
 
                 except Exception as e:
                     logger.warning(f"Failed to process instance: {str(e)}")
                     continue
 
             # Log generation summary
-            logger.info(f"Generated {valid_count}/{num_examples} valid schema-compliant examples")
+            logger.info(f"Generated {len(examples)}/{num_examples} valid schema-compliant examples")
 
             # Verify we got enough valid examples
             if len(examples) < num_examples:
                 raise TeacherAPIError(
                     f"Generated only {len(examples)} valid schema-compliant examples, "
-                    f"expected {num_examples}"
+                    f"expected {num_examples}. Try adjusting augment_factor or instruction."
                 )
 
             return examples[:num_examples]
@@ -382,7 +367,7 @@ class TeacherClient:
             logger.warning(
                 f"Schema-based generation failed, falling back to text parsing: {str(e)}"
             )
-            # Fallback to text parsing
+            # Fallback to text parsing if instructor fails
             return self._generate_with_text_parsing(policy, num_examples, instruction, seed_count)
 
     def _parse_synthetic_examples(self, response_text: str) -> List[Dict[str, str]]:

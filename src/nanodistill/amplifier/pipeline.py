@@ -38,7 +38,7 @@ class AmplificationPipeline:
         instruction: str,
         augment_factor: int,
         response_model: Optional[Type[BaseModel]] = None,
-    ) -> List[ThinkingTrace]:
+    ) -> tuple[List[ThinkingTrace], TaskPolicy]:
         """Amplify seed data into larger training dataset.
 
         Args:
@@ -49,7 +49,9 @@ class AmplificationPipeline:
             response_model: Optional Pydantic model to enforce schema on synthetic outputs
 
         Returns:
-            List of original + synthetic ThinkingTrace objects
+            Tuple of (amplified traces, extracted policy)
+            - List of original + synthetic ThinkingTrace objects
+            - TaskPolicy describing the learned task pattern
 
         Raises:
             AmplificationError: If amplification fails
@@ -73,7 +75,7 @@ class AmplificationPipeline:
         # Combine original and synthetic
         amplified_traces.extend(synthetic_traces)
 
-        return amplified_traces
+        return amplified_traces, policy
 
     def _extract_policy(
         self,

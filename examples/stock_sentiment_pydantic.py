@@ -408,10 +408,10 @@ def run_distillation(output_dir: str = "./outputs") -> DistillationResult:
     ensuring all amplified examples match the expected output format exactly.
     """
     return distill(
-        name="stock-sentiment-v1",
+        name="stock-sentiment-v2",
         seed=seed_data,
         instruction=INSTRUCTION,
-        teacher="claude-haiku-4-5",
+        teacher="claude-sonnet-4-5",
         student="mlx-community/Qwen2.5-7B-Instruct-4bit",
         augment_factor=5,
         output_dir=output_dir,

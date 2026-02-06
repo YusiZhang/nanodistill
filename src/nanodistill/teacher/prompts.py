@@ -6,20 +6,14 @@ from .schemas import TaskPolicy, ThinkingTrace
 
 # System prompt for generating Chain-of-Thought traces
 COT_SYSTEM_PROMPT = """You are a reasoning-focused AI assistant.
-Your task is to demonstrate clear thinking process.
+Your task is to demonstrate clear thinking process, then provide the final answer.
 
 When answering:
-1. Show your step-by-step thinking (this will be extracted as the 'thinking' field)
-2. Break down complex problems into smaller parts
-3. Consider multiple perspectives or approaches
-4. Explain your reasoning clearly
-5. Provide a clear final answer (this will be extracted as the 'output' field)
+1. Show your step-by-step thinking (brief, focused)
+2. Break down the problem logically
+3. Provide a clear final answer
 
-Provide your response in the following format:
-- Start with your thinking process
-- Then provide the final answer
-
-Your thinking should be detailed and thorough."""
+IMPORTANT: Keep your thinking concise and focused on key reasoning steps."""
 
 
 def build_cot_prompt(seed_example: Dict[str, str], instruction: str) -> str:
@@ -39,12 +33,11 @@ def build_cot_prompt(seed_example: Dict[str, str], instruction: str) -> str:
 
 Input: {example_input}
 
-Generate your reasoning and answer following the format shown above."""
+Please provide:
+1. Your step-by-step thinking (concise, focused reasoning)
+2. Your final answer
 
-    # If we have a reference output, include it as a hint
-    # (but teacher should provide their own reasoning)
-    if example_output:
-        prompt += f"\n\nExpected output (for reference): {example_output}"
+Reference output (for guidance): {example_output if example_output else "Generate based on the task"}"""
 
     return prompt
 

@@ -1,5 +1,6 @@
 """Core orchestrator for NanoDistill distillation pipeline."""
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Type, Union
@@ -13,6 +14,7 @@ from .config import DistillationConfig
 from .data.loader import load_seed_data, load_traces_from_jsonl, save_traces_to_jsonl, to_hf_dataset
 from .distiller.trainer import MLXTrainer
 from .teacher.client import TeacherClient
+from .teacher.schemas import TaskPolicy
 from .utils.errors import (
     ConfigError,
     NanoDistillError,
@@ -179,7 +181,7 @@ def distill(
                     total=None,
                 )
                 amplifier = AmplificationPipeline(teacher_client)
-                amplified_traces = amplifier.amplify(
+                amplified_traces, policy = amplifier.amplify(
                     seed_data,
                     cot_traces,
                     config.instruction,
@@ -193,6 +195,11 @@ def distill(
                 amplified_path.parent.mkdir(parents=True, exist_ok=True)
                 save_traces_to_jsonl(amplified_traces, amplified_path)
                 console.print(f"  Saved to: {amplified_path}")
+
+                # Save extracted task policy
+                policy_path = amplified_path.parent / "task_policy.json"
+                _save_policy(policy, policy_path)
+                console.print(f"  Saved to: {policy_path}")
             else:
                 # Load existing amplified data
                 console.print("📂 Loading existing amplified data...")
@@ -223,14 +230,25 @@ def distill(
             config=config,
         )
 
+        # Create summary report
+        summary_path = Path(config.output_dir) / config.name / "summary.json"
+        _save_summary_report(result, summary_path, console)
+
         # Summary
         console.print("\n[bold green]✅ Distillation Complete![/bold green]")
         console.print(f"Model path: {result.model_path}")
         console.print(f"Training examples: {result.metrics['training_examples']}")
+        console.print(f"Output directory: {Path(config.output_dir) / config.name}")
+        console.print("\nGenerated artifacts:")
+        console.print("  • traces_cot.jsonl - Original Chain-of-Thought traces")
+        console.print("  • task_policy.json - Extracted task pattern")
+        console.print("  • traces_amplified.jsonl - Amplified training data")
+        console.print("  • summary.json - Distillation metrics and statistics")
         console.print("\nNext steps:")
         console.print("1. Test the model locally with llama.cpp or MLX")
-        console.print("2. Compare against teacher model (Claude) on test set")
-        console.print("3. Iterate: adjust seed data or augment_factor as needed")
+        console.print("2. Review task_policy.json to understand learned pattern")
+        console.print("3. Compare against teacher model (Claude) on test set")
+        console.print("4. Iterate: adjust seed data or augment_factor as needed")
 
         return result
 
@@ -246,3 +264,58 @@ def distill(
         console.print("\n[bold red]❌ Unexpected Error[/bold red]")
         console.print(f"{type(e).__name__}: {str(e)}")
         raise NanoDistillError(f"Distillation failed: {str(e)}") from e
+
+
+def _save_policy(policy: TaskPolicy, path: Path) -> None:
+    """Save extracted task policy as JSON.
+
+    Args:
+        policy: TaskPolicy object to save
+        path: Output file path
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    policy_dict = policy.model_dump(mode="json")
+    with open(path, "w") as f:
+        json.dump(policy_dict, f, indent=2)
+
+
+def _save_summary_report(result: DistillationResult, path: Path, console: Console) -> None:
+    """Save comprehensive summary report with metrics and metadata.
+
+    Args:
+        result: DistillationResult from distillation
+        path: Output file path
+        console: Rich console for feedback
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    summary = {
+        "name": result.config.name,
+        "model": {
+            "teacher": result.config.teacher,
+            "student": result.config.student,
+            "model_path": str(result.model_path),
+        },
+        "data": {
+            "seed_examples": result.metrics["seed_count"],
+            "augment_factor": result.metrics["augment_factor"],
+            "training_examples": result.metrics["training_examples"],
+        },
+        "training": {
+            key: value
+            for key, value in result.metrics.items()
+            if key not in ["seed_count", "augment_factor", "training_examples", "teacher_model", "student_model"]
+        },
+        "config": {
+            "learning_rate": result.config.learning_rate,
+            "num_train_epochs": result.config.num_train_epochs,
+            "batch_size": result.config.batch_size,
+            "max_seq_length": result.config.max_seq_length,
+            "lora_rank": result.config.lora_rank,
+        },
+    }
+
+    with open(path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    console.print(f"  Saved to: {path}")
