@@ -10,7 +10,7 @@ from litellm import completion
 from pydantic import BaseModel, Field, create_model
 
 from ..utils.errors import TeacherAPIError, validate_teacher_api_key
-from ..utils.schema import filter_extra_fields, validate_against_schema
+from ..utils.schema import filter_extra_fields
 from .prompts import (
     COT_SYSTEM_PROMPT,
     POLICY_EXTRACTION_SYSTEM_PROMPT,
@@ -368,10 +368,10 @@ class TeacherClient:
                     break
 
                 try:
-                    # instance.input is str, instance.output is response_model instance
+                    # instance.input is str, instance.output is response_model
                     # If output is a string (fallback), clean and parse it
                     if isinstance(instance.output, str):
-                        # Output field is a string (shouldn't happen with proper Pydantic, but handle it)
+                        # Output field is a string - shouldn't happen but handle it
                         cleaned = _clean_json_string(instance.output)
                         output_dict = json.loads(cleaned)
                     else:

@@ -166,7 +166,7 @@ class DistillationConfig(BaseModel):
 
     suppress_warnings: bool = Field(
         default=False,
-        description="Suppress training warnings (e.g., sequence truncation warnings). Default: False (show warnings)",
+        description="Suppress training warnings (e.g., truncation). Default: False",
     )
 
     @staticmethod

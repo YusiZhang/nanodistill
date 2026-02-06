@@ -37,7 +37,9 @@ Please provide:
 1. Your step-by-step thinking (concise, focused reasoning)
 2. Your final answer
 
-Reference output (for guidance): {example_output if example_output else "Generate based on the task"}"""
+Reference output (for guidance): {
+    example_output if example_output else "Generate based on the task"
+}"""
 
     return prompt
 
@@ -157,7 +159,8 @@ Please generate {num_examples} NEW examples (not variations of the seeds) that:
 5. Maintain consistent difficulty level
 
 CRITICAL FORMATTING INSTRUCTIONS:
-- For the output field: Generate ONLY raw JSON matching the schema (no markdown, no code blocks, no tags)
+- For the output field: Generate ONLY raw JSON matching the schema
+  (no markdown, no code blocks, no tags)
 - Do NOT wrap the JSON in ```json code blocks
 - Do NOT wrap the JSON in <answer> tags or any other XML tags
 - Output must be valid JSON that can be parsed directly

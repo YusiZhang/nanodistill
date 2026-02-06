@@ -154,10 +154,11 @@ def distill(
                     # Amplification complete
                     use_existing_data = True
                     console.print(
-                        f"[bold yellow]⚡ Found complete amplification data[/bold yellow]"
+                        "[bold yellow]⚡ Found complete amplification data[/bold yellow]"
                     )
                     console.print(
-                        "[yellow]   Skipping API calls and going directly to fine-tuning...\n[/yellow]"
+                        "[yellow]   Skipping API calls and going directly to "
+                        "fine-tuning...\n[/yellow]"
                     )
                 else:
                     # Amplification incomplete - resume
@@ -165,15 +166,19 @@ def distill(
                     completed_batches = existing_synthetic // len(seed_data)
                     total_batches = config.augment_factor - 1
                     console.print(
-                        f"[bold yellow]⚡ Found partial amplification: {existing_synthetic}/{total_synthetic} synthetic examples[/bold yellow]"
+                        f"[bold yellow]⚡ Found partial amplification: "
+                        f"{existing_synthetic}/{total_synthetic} synthetic "
+                        f"examples[/bold yellow]"
                     )
                     console.print(
-                        f"[yellow]   Resuming from batch {completed_batches + 1}/{total_batches}...\n[/yellow]"
+                        f"[yellow]   Resuming from batch {completed_batches + 1}/"
+                        f"{total_batches}...\n[/yellow]"
                     )
             except Exception:
                 # If checkpoint is corrupted, start fresh
                 console.print(
-                    "[bold yellow]⚠️  Corrupted amplification checkpoint, starting fresh[/bold yellow]\n"
+                    "[bold yellow]⚠️  Corrupted amplification checkpoint, "
+                    "starting fresh[/bold yellow]\n"
                 )
 
         # Execute pipeline
@@ -228,16 +233,22 @@ def distill(
                     )
 
                     # Consume generator to get final results and display batch progress
-                    # Use manual iteration to properly capture StopIteration with return value
+                    # Use manual iteration to properly capture StopIteration return
                     amplified_traces = None
                     policy = None
                     try:
                         while True:
-                            batch_num, total_batches, current_synthetic, total_synthetic = next(amplify_gen)
+                            (
+                                batch_num,
+                                total_batches,
+                                current_synthetic,
+                                total_synthetic,
+                            ) = next(amplify_gen)
                             progress.update(task2, completed=batch_num)
                             console.print(
                                 f"  Batch {batch_num}/{total_batches} complete "
-                                f"({current_synthetic}/{total_synthetic} synthetic examples)"
+                                f"({current_synthetic}/{total_synthetic} "
+                                f"synthetic examples)"
                             )
                     except StopIteration as e:
                         # Capture return value from generator
@@ -364,7 +375,14 @@ def _save_summary_report(result: DistillationResult, path: Path, console: Consol
         "training": {
             key: value
             for key, value in result.metrics.items()
-            if key not in ["seed_count", "augment_factor", "training_examples", "teacher_model", "student_model"]
+            if key
+            not in [
+                "seed_count",
+                "augment_factor",
+                "training_examples",
+                "teacher_model",
+                "student_model",
+            ]
         },
         "config": {
             "learning_rate": result.config.learning_rate,
