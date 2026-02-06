@@ -4,10 +4,12 @@ Orchestrates policy extraction and synthetic example generation to expand
 a small seed dataset into a large training dataset.
 """
 
-from typing import Dict, List, Optional, Type
+from pathlib import Path
+from typing import Dict, Generator, List, Optional, Tuple, Type
 
 from pydantic import BaseModel
 
+from ..data.loader import append_traces_to_jsonl, load_traces_from_jsonl, save_traces_to_jsonl
 from ..teacher.client import TeacherClient
 from ..teacher.schemas import TaskPolicy, ThinkingTrace
 
@@ -37,24 +39,33 @@ class AmplificationPipeline:
         cot_traces: List[ThinkingTrace],
         instruction: str,
         augment_factor: int,
+        output_path: Optional[Path] = None,
         response_model: Optional[Type[BaseModel]] = None,
-    ) -> tuple[List[ThinkingTrace], TaskPolicy]:
-        """Amplify seed data into larger training dataset.
+    ) -> Generator[Tuple[int, int, int, int], None, Tuple[List[ThinkingTrace], TaskPolicy]]:
+        """Amplify seed data into larger training dataset with incremental checkpointing.
+
+        Generates synthetic examples in batches (one batch per augment unit),
+        saving progress after each batch. Resumes from checkpoint if interrupted.
 
         Args:
             seed_examples: Original seed examples
             cot_traces: Generated Chain-of-Thought traces for seeds
             instruction: Task instruction / system prompt
             augment_factor: Target multiplication factor (e.g., 50x)
+            output_path: Optional path to checkpoint file (traces_amplified.jsonl)
             response_model: Optional Pydantic model to enforce schema on synthetic outputs
+
+        Yields:
+            Tuple of (batch_num, total_batches, current_synthetic, total_synthetic)
+            - batch_num: Current batch number (1-indexed)
+            - total_batches: Total number of batches needed
+            - current_synthetic: Total synthetic examples generated so far
+            - total_synthetic: Total synthetic examples needed
 
         Returns:
             Tuple of (amplified traces, extracted policy)
             - List of original + synthetic ThinkingTrace objects
             - TaskPolicy describing the learned task pattern
-
-        Raises:
-            AmplificationError: If amplification fails
         """
         # Start with original traces
         amplified_traces = cot_traces.copy()
@@ -62,19 +73,63 @@ class AmplificationPipeline:
         # Phase 1: Extract policy from seeds
         policy = self._extract_policy(seed_examples, cot_traces, instruction)
 
-        # Phase 2: Generate synthetic examples
-        num_synthetic = len(seed_examples) * (augment_factor - 1)
-        synthetic_examples = self._generate_synthetic_examples(
-            policy, num_synthetic, instruction, len(seed_examples), response_model
-        )
+        # Calculate batch parameters
+        seed_count = len(seed_examples)
+        total_synthetic = seed_count * (augment_factor - 1)
+        batch_size = seed_count
+        num_batches = augment_factor - 1
 
-        # Convert synthetic examples to ThinkingTrace (generate CoT for each)
-        # For synthetic examples, we use the teacher to generate reasoning
-        synthetic_traces = self._synthesize_cot_for_synthetic(synthetic_examples, instruction)
+        # Skip if no synthetic examples needed
+        if num_batches == 0:
+            return amplified_traces, policy
 
-        # Combine original and synthetic
-        amplified_traces.extend(synthetic_traces)
+        # Check for existing progress if checkpoint path provided
+        existing_synthetic = 0
+        completed_batches = 0
+        if output_path and Path(output_path).exists():
+            try:
+                all_traces = load_traces_from_jsonl(output_path)
+                existing_synthetic = max(0, len(all_traces) - seed_count)
+                amplified_traces = all_traces.copy()
+                completed_batches = existing_synthetic // batch_size
+            except Exception:
+                # If checkpoint is corrupted, start fresh
+                existing_synthetic = 0
+                completed_batches = 0
 
+        # Calculate which batches to generate
+        start_batch = completed_batches + 1
+
+        # Phase 2: Generate synthetic examples in batches
+        for batch_num in range(start_batch, num_batches + 1):
+            # Generate batch of synthetic examples
+            batch_examples = self._generate_synthetic_examples(
+                policy, batch_size, instruction, seed_count, response_model
+            )
+
+            # Synthesize CoT for batch
+            batch_traces = self._synthesize_cot_for_synthetic(batch_examples, instruction)
+
+            # Save checkpoint
+            if output_path:
+                output_path = Path(output_path)
+                if batch_num == 1 and completed_batches == 0:
+                    # First batch: write seeds + first batch
+                    save_traces_to_jsonl(amplified_traces + batch_traces, output_path)
+                else:
+                    # Subsequent batches: append only
+                    append_traces_to_jsonl(batch_traces, output_path)
+
+            # Update in-memory list
+            amplified_traces.extend(batch_traces)
+
+            # Calculate progress
+            current_synthetic = existing_synthetic + (batch_num - completed_batches) * batch_size
+
+            # Yield progress
+            yield batch_num, num_batches, current_synthetic, total_synthetic
+
+        # Return final results
         return amplified_traces, policy
 
     def _extract_policy(
