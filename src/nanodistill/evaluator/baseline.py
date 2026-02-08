@@ -18,7 +18,6 @@ from .metrics import (
     aggregate_metrics,
     compare_json_fields,
     compute_diff_html,
-    compute_exact_match,
     compute_similarity,
 )
 from .schemas import BaselineResult, ComparisonExample
