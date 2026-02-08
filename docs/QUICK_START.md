@@ -83,7 +83,34 @@ python my_distillation.py
 5. 🔥 Fine-tunes the Llama model on Apple Silicon
 6. 💾 Saves to `./outputs/math-tutor-v1/`
 
-## Step 5: Use Your Model
+## Step 5: Evaluate Your Model (Optional)
+
+After training, you can automatically generate an HTML report comparing your fine-tuned model against the teacher:
+
+```python
+from nanodistill import distill
+
+result = distill(
+    name="math-tutor-v1",
+    seed="seeds.json",
+    instruction="You are a helpful math tutor. Show your reasoning step-by-step.",
+    evaluation_report=True,  # Enable baseline evaluation
+)
+
+print(f"📊 Report: {result.metrics.get('baseline')}")
+```
+
+This generates:
+- **`outputs/math-tutor-v1/baseline_report.html`** - Interactive HTML report with:
+  - 📊 Exact match rate between student and teacher
+  - 📊 Average similarity score
+  - 📊 Side-by-side output comparison
+  - 🔍 Filter by matches/mismatches
+  - 💭 Reasoning traces (if available)
+
+Open the HTML file in your browser to explore results visually.
+
+## Step 6: Use Your Model
 
 ### Quick Test (MLX - Recommended)
 
@@ -136,6 +163,14 @@ ollama run math-tutor
 # Then type: "What is 7+8?"
 ```
 
+## Step 7: Monitor and Iterate
+
+Use the baseline report to identify where your model differs from the teacher:
+
+1. **Exact matches low?** More seed examples or higher `augment_factor`
+2. **Similarity high but exact mismatches?** Model behavior is close but formatted differently
+3. **See patterns in mismatches?** Adjust instruction or seed data to emphasize those patterns
+
 ## File Organization
 
 After running, you'll have:
@@ -151,8 +186,15 @@ After running, you'll have:
         │   ├── adapters.npz       # LoRA weights
         │   ├── config.json
         │   └── tokenizer.json
+        ├── data/
+        │   ├── train.jsonl        # Training split
+        │   └── valid.jsonl        # Validation split
         ├── traces_cot.jsonl       # Generated reasoning
-        └── traces_amplified.jsonl # Training data (500 examples)
+        ├── traces_amplified.jsonl # Training data (500 examples)
+        ├── baseline_report.html   # Evaluation report (if enabled)
+        ├── baseline_cache.jsonl   # Cached evaluation results
+        ├── task_policy.json       # Extracted task pattern
+        └── summary.json           # Distillation metrics
 ```
 
 ## Common Use Cases
@@ -278,10 +320,11 @@ augment_factor=30  # Instead of 50
 
 1. ✅ Prepare your seed data
 2. ✅ Run distillation
-3. ✅ Test outputs locally
-4. ✅ Deploy with Ollama
-5. ✅ Monitor performance
-6. ✅ Iterate with new seed data
+3. ✅ Review baseline evaluation report
+4. ✅ Test outputs locally
+5. ✅ Deploy with Ollama
+6. ✅ Monitor performance
+7. ✅ Iterate with new seed data
 
 ## Advanced Options
 

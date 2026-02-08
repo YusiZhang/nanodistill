@@ -323,7 +323,10 @@ class DistillationConfig(BaseModel):
 
     save_checkpoints: bool = Field(
         default=True,
-        description="Save model checkpoints incrementally during training for recovery. Default: True",
+        description=(
+            "Save model checkpoints incrementally during training for recovery. "
+            "Default: True"
+        ),
     )
 
     checkpoint_interval: int = Field(
@@ -336,6 +339,11 @@ class DistillationConfig(BaseModel):
     suppress_warnings: bool = Field(
         default=False,
         description="Suppress training warnings (e.g., truncation). Default: False",
+    )
+
+    evaluation_report: bool = Field(
+        default=False,
+        description="Generate HTML baseline evaluation report after training. Default: False",
     )
 
     @staticmethod

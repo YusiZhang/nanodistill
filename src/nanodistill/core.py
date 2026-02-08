@@ -136,6 +136,32 @@ def distill(
         console.print(f"Seed examples: {len(seed_data)}")
         console.print(f"Target dataset size: {len(seed_data) * augment_factor}\n")
 
+        # Check if adapters already exist (and are not empty)
+        output_base = Path(config.output_dir) / config.name
+        adapter_path = output_base / "adapters"
+        adapter_files = (
+            list(adapter_path.glob("*.safetensors"))
+            + list(adapter_path.glob("*.npz"))
+            if adapter_path.exists()
+            else []
+        )
+        skip_training = len(adapter_files) > 0
+
+        if skip_training:
+            console.print(
+                "[bold yellow]⚠️  Fine-tuned adapters already exist![/bold yellow]"
+            )
+            console.print(f"   Location: {adapter_path}")
+            console.print(
+                "[yellow]   Skipping training stage and proceeding to evaluation...[/yellow]"
+            )
+            console.print(
+                "\n[bold]💡 To train a new model, change the run name:[/bold]"
+            )
+            console.print('   distill(name="math-tutor-v2", ...)')
+            console.print("   OR")
+            console.print('   distill(name="math-tutor-v1-retrain", ...)\n')
+
         # Initialize components
         distiller = MLXTrainer(config.student, config)
 
@@ -182,13 +208,40 @@ def distill(
                 )
 
         # Execute pipeline
+        # Initialize amplified_traces to empty list (will be populated below)
+        amplified_traces: List = []
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
 
-            if not use_existing_data:
+            if skip_training:
+                # Skip stages 1-3, load existing model
+                console.print(
+                    "[bold cyan]Skipping stages 1-3 (CoT, Amplification, "
+                    "Training)[/bold cyan]\n"
+                )
+                model_path = str(output_base)
+
+                # Try to load existing metrics from summary
+                summary_path = output_base / "summary.json"
+                summary_data: Dict = {}
+                if summary_path.exists():
+                    with open(summary_path) as f:
+                        summary_data = json.load(f)
+
+                existing_metrics = summary_data.get("training", {})
+
+                # Load amplified_traces for evaluation purposes
+                if amplified_path.exists():
+                    amplified_traces = load_traces_from_jsonl(str(amplified_path))
+                else:
+                    # If no amplified data, use empty list
+                    amplified_traces = []
+
+            elif not use_existing_data:
                 # Stage 1: Generate CoT traces from seed (if not cached)
                 traces_path = Path(config.output_dir) / config.name / "traces_cot.jsonl"
                 if not resume_amplification and traces_path.exists():
@@ -234,7 +287,6 @@ def distill(
 
                     # Consume generator to get final results and display batch progress
                     # Use manual iteration to properly capture StopIteration return
-                    amplified_traces = None
                     policy = None
                     try:
                         while True:
@@ -277,49 +329,96 @@ def distill(
                 amplified_traces = load_traces_from_jsonl(str(amplified_path))
                 console.print(f"✓ Loaded {len(amplified_traces)} training examples\n")
 
-            # Stage 3: Fine-tune student model
-            task3 = progress.add_task(
-                "[green]🔥 Fine-tuning student model...",
-                total=None,
-            )
-            training_dataset = to_hf_dataset(amplified_traces)
-            model_path = distiller.train(training_dataset)
-            progress.update(task3, completed=True)
-            console.print(f"✓ Model trained and saved to {model_path}\n")
+            # Stage 3: Fine-tune student model (skip if using existing adapters)
+            if not skip_training:
+                task3 = progress.add_task(
+                    "[green]🔥 Fine-tuning student model...",
+                    total=None,
+                )
+                training_dataset = to_hf_dataset(amplified_traces)
+                model_path = distiller.train(training_dataset)
+                progress.update(task3, completed=True)
+                console.print(f"✓ Model trained and saved to {model_path}\n")
 
         # Prepare results
-        result = DistillationResult(
-            model_path=Path(model_path),
-            metrics={
+        if skip_training:
+            # Use existing metrics
+            base_metrics = {
+                "seed_count": len(seed_data),
+                "augment_factor": config.augment_factor,
+                "teacher_model": config.teacher,
+                "student_model": config.student,
+            }
+            base_metrics.update(existing_metrics)
+            result_metrics = base_metrics
+        else:
+            # Use newly computed metrics
+            result_metrics = {
                 "seed_count": len(seed_data),
                 "training_examples": len(amplified_traces),
                 "augment_factor": config.augment_factor,
                 "teacher_model": config.teacher,
                 "student_model": config.student,
                 **distiller.metrics,
-            },
+            }
+
+        result = DistillationResult(
+            model_path=Path(model_path),
+            metrics=result_metrics,
             config=config,
         )
 
-        # Create summary report
-        summary_path = Path(config.output_dir) / config.name / "summary.json"
-        _save_summary_report(result, summary_path, console)
+        # Stage 4: Optional baseline evaluation
+        if config.evaluation_report:
+            try:
+                console.print("\n[bold cyan]📊 Running baseline evaluation...[/bold cyan]")
+                from .evaluator import evaluate_baseline
+
+                baseline_result = evaluate_baseline(
+                    run_name=config.name,
+                    output_dir=config.output_dir,
+                )
+                console.print(f"✓ Report saved: {baseline_result.html_path}\n")
+                result.metrics["baseline"] = {
+                    "exact_match_rate": baseline_result.metrics.exact_match_rate,
+                    "avg_similarity": baseline_result.metrics.avg_similarity,
+                    "total_examples": baseline_result.metrics.total_examples,
+                    "exact_matches": baseline_result.metrics.exact_matches,
+                }
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Baseline evaluation failed: {e}[/yellow]\n")
+
+        # Create summary report (skip if we skipped training)
+        if not skip_training:
+            summary_path = Path(config.output_dir) / config.name / "summary.json"
+            _save_summary_report(result, summary_path, console)
 
         # Summary
-        console.print("\n[bold green]✅ Distillation Complete![/bold green]")
+        if skip_training:
+            console.print("\n[bold green]✅ Ready for Evaluation![/bold green]")
+            console.print("   (Training skipped - using existing adapters)")
+        else:
+            console.print("\n[bold green]✅ Distillation Complete![/bold green]")
         console.print(f"Model path: {result.model_path}")
-        console.print(f"Training examples: {result.metrics['training_examples']}")
+        if "training_examples" in result.metrics:
+            console.print(f"Training examples: {result.metrics['training_examples']}")
         console.print(f"Output directory: {Path(config.output_dir) / config.name}")
-        console.print("\nGenerated artifacts:")
-        console.print("  • traces_cot.jsonl - Original Chain-of-Thought traces")
-        console.print("  • task_policy.json - Extracted task pattern")
-        console.print("  • traces_amplified.jsonl - Amplified training data")
-        console.print("  • summary.json - Distillation metrics and statistics")
-        console.print("\nNext steps:")
-        console.print("1. Test the model locally with llama.cpp or MLX")
-        console.print("2. Review task_policy.json to understand learned pattern")
-        console.print("3. Compare against teacher model (Claude) on test set")
-        console.print("4. Iterate: adjust seed data or augment_factor as needed")
+
+        if not skip_training:
+            console.print("\nGenerated artifacts:")
+            console.print("  • traces_cot.jsonl - Original Chain-of-Thought traces")
+            console.print("  • task_policy.json - Extracted task pattern")
+            console.print("  • traces_amplified.jsonl - Amplified training data")
+            console.print("  • summary.json - Distillation metrics and statistics")
+            console.print("\nNext steps:")
+            console.print("1. Test the model locally with llama.cpp or MLX")
+            console.print("2. Review task_policy.json to understand learned pattern")
+            console.print("3. Compare against teacher model (Claude) on test set")
+            console.print("4. Iterate: adjust seed data or augment_factor as needed")
+        else:
+            console.print("\nNext steps:")
+            console.print("1. Review the baseline evaluation report")
+            console.print("2. Optionally re-train with a new name if needed")
 
         return result
 

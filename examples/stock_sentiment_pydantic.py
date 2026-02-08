@@ -433,6 +433,7 @@ def run_distillation(output_dir: str = "./outputs") -> DistillationResult:
         max_seq_length=512,  # Sufficient for stock analysis JSON
         lora_rank=16,  # Higher rank for nuanced sentiment reasoning
         lora_layers=8,  # Adapt more layers for better quality
+        evaluation_report=True,  # Generate HTML baseline evaluation report
     )
 
 
