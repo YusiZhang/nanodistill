@@ -17,7 +17,7 @@ def download_student_model():
     try:
         from mlx_lm import load
 
-        model_id = "mlx-community/Llama-3-8B-Instruct-4bit"
+        model_id = "mlx-community/Meta-Llama-3-8B-Instruct-4bit"
 
         print(f"📥 Downloading {model_id}...")
         print("   This is a one-time download (~4GB for 8B model)")
