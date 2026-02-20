@@ -16,7 +16,7 @@
 
 If you want a small, local model that does one thing well from a handful of examples, this is it.
 
-[Quick Start](docs/QUICK_START.md) · [Workflow](docs/WORKFLOW.md) · [Model Setup](docs/MODEL_SETUP.md) · [Contributing](docs/CONTRIBUTING.md)
+[Quick Start](docs/QUICK_START.md) · [Workflow](docs/WORKFLOW.md) · [Model Setup](docs/MODEL_SETUP.md) · [Encoder Fine-Tuning](docs/ENCODER_FINETUNING.md) · [Contributing](docs/CONTRIBUTING.md)
 
 Preferred setup: `uv pip install -e .` (or `pip install -e .`). Runs on **macOS with Apple Silicon (M1/M2/M3+)**, 16GB+ RAM.
 

@@ -3,7 +3,7 @@
 import csv
 import json
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 from datasets import Dataset
 
@@ -72,6 +72,67 @@ def load_training_data(
     raise ConfigError(
         f"training_data must be a list of dicts, file path string, or Path object, "
         f"got {type(training_data)}"
+    )
+
+
+def load_classification_data(
+    classification_data: Union[List[Dict[str, Any]], str, Path],
+    text_field: str = "input",
+    label_field: str = "label",
+) -> List[Dict[str, Any]]:
+    """Load sequence-classification records from list/JSON/JSONL/CSV.
+
+    Required fields are configurable via `text_field` and `label_field`.
+
+    Args:
+        classification_data: Records as list of dicts or a file path
+        text_field: Field containing source text
+        label_field: Field containing class label
+
+    Returns:
+        Validated list of classification rows
+
+    Raises:
+        ConfigError: If data is invalid, empty, or missing required fields
+    """
+    if isinstance(classification_data, list):
+        return _validate_classification_records(classification_data, text_field, label_field)
+
+    if isinstance(classification_data, (str, Path)):
+        path = Path(classification_data)
+        if not path.exists():
+            raise ConfigError(f"Classification data file not found: {path}")
+
+        rows: List[Dict[str, Any]] = []
+        try:
+            if path.suffix == ".json":
+                with open(path) as f:
+                    loaded = json.load(f)
+                if not isinstance(loaded, list):
+                    raise ConfigError("Classification JSON file must contain a list of examples")
+                rows = loaded
+            elif path.suffix == ".jsonl":
+                with open(path) as f:
+                    for line in f:
+                        if line.strip():
+                            rows.append(json.loads(line))
+            elif path.suffix == ".csv":
+                with open(path) as f:
+                    reader = csv.DictReader(f)
+                    rows = [dict(row) for row in reader]
+            else:
+                raise ConfigError(
+                    f"Unsupported classification file format: {path.suffix}. "
+                    "Supported: .json, .jsonl, .csv"
+                )
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            raise ConfigError(f"Failed to load classification data from {path}: {e}") from e
+
+        return _validate_classification_records(rows, text_field, label_field)
+
+    raise ConfigError(
+        "classification_data must be a list of dicts, file path string, or Path object, "
+        f"got {type(classification_data)}"
     )
 
 
@@ -178,6 +239,32 @@ def _validate_seed_list(seed: List[Dict[str, str]]) -> None:
 
         if not example["output"] or not str(example["output"]).strip():
             raise ConfigError(f"seed[{i}] has empty 'output' field")
+
+
+def _validate_classification_records(
+    records: List[Dict[str, Any]],
+    text_field: str,
+    label_field: str,
+) -> List[Dict[str, Any]]:
+    """Validate shape and required fields for sequence-classification records."""
+    if not records:
+        raise ConfigError("classification_data must contain at least 1 example")
+
+    for i, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ConfigError(f"classification_data[{i}] must be a dict, got {type(record)}")
+        if text_field not in record:
+            raise ConfigError(
+                f"classification_data[{i}] missing required text field '{text_field}'"
+            )
+        if label_field not in record:
+            raise ConfigError(
+                f"classification_data[{i}] missing required label field '{label_field}'"
+            )
+        if not str(record[text_field]).strip():
+            raise ConfigError(f"classification_data[{i}] has empty text field '{text_field}'")
+
+    return records
 
 
 def to_hf_dataset(

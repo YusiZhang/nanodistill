@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel
 from rich.console import Console
@@ -12,6 +12,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from .amplifier.pipeline import AmplificationPipeline
 from .config import DistillationConfig
 from .data.loader import (
+    load_classification_data,
     load_seed_data,
     load_traces_from_jsonl,
     load_training_data,
@@ -19,6 +20,13 @@ from .data.loader import (
     to_hf_dataset,
 )
 from .distiller.trainer import MLXTrainer
+from .encoder import (
+    MLXEncoderTrainer,
+    build_label_maps,
+    split_examples,
+    to_labeled_examples,
+    traces_to_labeled_examples,
+)
 from .teacher.client import TeacherClient
 from .teacher.schemas import TaskPolicy
 from .utils.errors import (
@@ -51,6 +59,14 @@ def distill(
     instruction: str = "",
     teacher: str = "claude-sonnet-4-5",
     student: str = "mlx-community/Llama-3-8B-Instruct-4bit",
+    task_type: Literal["causal_lm", "sequence_classification"] = "causal_lm",
+    num_labels: Optional[int] = None,
+    text_field: str = "input",
+    label_field: str = "label",
+    encoder_backbone: str = "bert-base-uncased",
+    encoder_lora_rank: int = 8,
+    encoder_lora_targets: Optional[List[str]] = None,
+    encoder_load_pretrained: bool = True,
     augment_factor: int = 50,
     output_dir: str = "./outputs",
     response_model: Optional[Type[BaseModel]] = None,
@@ -59,8 +75,9 @@ def distill(
 ) -> DistillationResult:
     """Convert seed examples into a reasoning-capable small language model.
 
-    Core entry point for NanoDistill. Transforms 10+ examples and an instruction
-    into a fine-tuned, locally-runnable model optimized for Apple Silicon.
+    Core entry point for NanoDistill. Supports two workflows:
+    - causal_lm: decoder distillation with synthetic CoT and MLX-LM LoRA
+    - sequence_classification: encoder fine-tuning on labeled text data
 
     Pipeline:
     1. 🎓 Policy Extraction - Analyze seed data to extract task pattern
@@ -80,6 +97,17 @@ def distill(
                 Requires ANTHROPIC_API_KEY environment variable
         student: Student model to fine-tune (MLX-compatible model ID).
                 Default: "mlx-community/Llama-3-8B-Instruct-4bit"
+        task_type: Training objective. One of:
+                  - "causal_lm" (default): decoder model fine-tuning
+                  - "sequence_classification": encoder model fine-tuning
+        num_labels: Optional explicit class count for sequence classification.
+        text_field: Input text field for sequence-classification datasets.
+        label_field: Label field for sequence-classification datasets.
+        encoder_backbone: Encoder backbone for sequence classification.
+                         Default: "bert-base-uncased"
+        encoder_lora_rank: LoRA rank for encoder fine-tuning.
+        encoder_lora_targets: Encoder module name substrings to target with LoRA.
+        encoder_load_pretrained: Whether to load pretrained HF encoder weights.
         augment_factor: Multiply seed examples by this factor for training dataset.
                        Default: 50 (10 seeds × 50 = 500 training examples)
         output_dir: Directory to save model and outputs.
@@ -89,9 +117,9 @@ def distill(
                        and filters extra fields automatically.
         training_data: Pre-formatted training data to bypass CoT synthesis and
                       amplification stages. Can be:
-                      - List of dicts with 'input', 'thinking', and 'output' keys
-                      - Path to JSONL file with those fields
-                      When provided, seed, instruction, and teacher API key are not required.
+                      - causal_lm: List/JSONL of {'input','thinking','output'}
+                      - sequence_classification: List/file with text_field + label_field
+                      When provided, seed and teacher API key are not required.
         **kwargs: Additional configuration options
 
     Returns:
@@ -123,6 +151,31 @@ def distill(
         console.print("\n[bold cyan]🔬 NanoDistill: Distillation Pipeline[/bold cyan]")
         console.print(f"Run: {name}")
 
+        if encoder_lora_targets is None:
+            encoder_lora_targets = ["query", "value"]
+
+        # Encoder route: sequence-classification task
+        if task_type == "sequence_classification":
+            return _distill_sequence_classification(
+                console=console,
+                name=name,
+                seed=seed,
+                instruction=instruction,
+                teacher=teacher,
+                output_dir=output_dir,
+                augment_factor=augment_factor,
+                response_model=response_model,
+                training_data=training_data,
+                num_labels=num_labels,
+                text_field=text_field,
+                label_field=label_field,
+                encoder_backbone=encoder_backbone,
+                encoder_lora_rank=encoder_lora_rank,
+                encoder_lora_targets=encoder_lora_targets,
+                encoder_load_pretrained=encoder_load_pretrained,
+                kwargs=kwargs,
+            )
+
         # Bypass path: user-supplied training data skips CoT + amplification
         bypass_pipeline = training_data is not None
 
@@ -145,6 +198,14 @@ def distill(
                 instruction="Training from pre-formatted data",
                 teacher=teacher,
                 student=student,
+                task_type=task_type,
+                num_labels=num_labels,
+                text_field=text_field,
+                label_field=label_field,
+                encoder_backbone=encoder_backbone,
+                encoder_lora_rank=encoder_lora_rank,
+                encoder_lora_targets=encoder_lora_targets,
+                encoder_load_pretrained=encoder_load_pretrained,
                 augment_factor=augment_factor,
                 output_dir=output_dir,
                 **kwargs,
@@ -170,6 +231,14 @@ def distill(
                 instruction=instruction,
                 teacher=teacher,
                 student=student,
+                task_type=task_type,
+                num_labels=num_labels,
+                text_field=text_field,
+                label_field=label_field,
+                encoder_backbone=encoder_backbone,
+                encoder_lora_rank=encoder_lora_rank,
+                encoder_lora_targets=encoder_lora_targets,
+                encoder_load_pretrained=encoder_load_pretrained,
                 augment_factor=augment_factor,
                 output_dir=output_dir,
                 **kwargs,
@@ -475,6 +544,186 @@ def distill(
         raise NanoDistillError(f"Distillation failed: {str(e)}") from e
 
 
+def _distill_sequence_classification(
+    *,
+    console: Console,
+    name: str,
+    seed: Union[List[Dict[str, str]], str, Path, None],
+    instruction: str,
+    teacher: str,
+    output_dir: str,
+    augment_factor: int,
+    response_model: Optional[Type[BaseModel]],
+    training_data: Optional[Union[List[Dict[str, str]], str, Path]],
+    num_labels: Optional[int],
+    text_field: str,
+    label_field: str,
+    encoder_backbone: str,
+    encoder_lora_rank: int,
+    encoder_lora_targets: List[str],
+    encoder_load_pretrained: bool,
+    kwargs: Dict[str, Any],
+) -> DistillationResult:
+    """Run encoder-only sequence-classification distillation/training."""
+    console.print("[bold cyan]Task: sequence classification (encoder)[/bold cyan]")
+    console.print(f"Backbone: {encoder_backbone}")
+
+    bypass_pipeline = training_data is not None
+    validate_output_dir(output_dir)
+
+    if bypass_pipeline:
+        assert training_data is not None
+        rows = load_classification_data(
+            training_data,
+            text_field=text_field,
+            label_field=label_field,
+        )
+        seed_data = [{"input": "n/a", "output": "n/a"}]
+        config = DistillationConfig(
+            name=name,
+            seed=seed_data,
+            instruction="Sequence classification from labeled data",
+            teacher=teacher,
+            student=encoder_backbone,
+            task_type="sequence_classification",
+            num_labels=num_labels,
+            text_field=text_field,
+            label_field=label_field,
+            encoder_backbone=encoder_backbone,
+            encoder_lora_rank=encoder_lora_rank,
+            encoder_lora_targets=encoder_lora_targets,
+            encoder_load_pretrained=encoder_load_pretrained,
+            augment_factor=augment_factor,
+            output_dir=output_dir,
+            **kwargs,
+        )
+        console.print(f"Labeled examples: {len(rows)}")
+    else:
+        if seed is None:
+            raise ConfigError("seed is required when training_data is not provided")
+
+        validate_teacher_api_key(teacher)
+        seed_data = load_seed_data(seed)
+        validate_seed_count(len(seed_data))
+
+        config = DistillationConfig(
+            name=name,
+            seed=seed_data,
+            instruction=instruction,
+            teacher=teacher,
+            student=encoder_backbone,
+            task_type="sequence_classification",
+            num_labels=num_labels,
+            text_field=text_field,
+            label_field=label_field,
+            encoder_backbone=encoder_backbone,
+            encoder_lora_rank=encoder_lora_rank,
+            encoder_lora_targets=encoder_lora_targets,
+            encoder_load_pretrained=encoder_load_pretrained,
+            augment_factor=augment_factor,
+            output_dir=output_dir,
+            **kwargs,
+        )
+
+        # Default path: map seed input->text and output->label directly.
+        rows: List[Dict[str, Any]] = [
+            {
+                text_field: example["input"],
+                label_field: example["output"],
+            }
+            for example in seed_data
+        ]
+
+        if config.augment_factor > 1:
+            console.print("Generating synthetic examples for classification...")
+            teacher_client = TeacherClient(config.teacher, config=config)
+            cot_traces = teacher_client.synthesize_cot(seed_data, config.instruction)
+
+            amplifier = AmplificationPipeline(teacher_client)
+            amplify_gen = amplifier.amplify(
+                seed_data,
+                cot_traces,
+                config.instruction,
+                config.augment_factor,
+                output_path=Path(config.output_dir) / config.name / "traces_amplified.jsonl",
+                response_model=response_model,
+            )
+            policy = None
+            try:
+                while True:
+                    next(amplify_gen)
+            except StopIteration as e:
+                if e.value:
+                    amplified_traces, policy = e.value
+                else:
+                    amplified_traces = cot_traces.copy()
+
+            rows = [
+                {
+                    text_field: row["input"],
+                    label_field: row["label"],
+                }
+                for row in traces_to_labeled_examples(amplified_traces)
+            ]
+
+            if policy:
+                policy_path = Path(config.output_dir) / config.name / "task_policy.json"
+                _save_policy(policy, policy_path)
+                console.print(f"  Policy saved to: {policy_path}")
+
+    label_to_id, id_to_label = build_label_maps(
+        rows,
+        label_field=label_field,
+        num_labels=config.num_labels,
+    )
+    examples = to_labeled_examples(
+        rows,
+        text_field=text_field,
+        label_field=label_field,
+        label_to_id=label_to_id,
+    )
+    train_examples, val_examples = split_examples(
+        examples,
+        val_split=config.val_split,
+    )
+
+    console.print(f"Train examples: {len(train_examples)}")
+    console.print(f"Validation examples: {len(val_examples)}")
+    console.print(f"Detected labels: {len(label_to_id)}")
+
+    trainer = MLXEncoderTrainer(config)
+    model_path = trainer.train(
+        train_examples=train_examples,
+        val_examples=val_examples,
+        label_to_id=label_to_id,
+        id_to_label=id_to_label,
+    )
+
+    result_metrics = {
+        "seed_count": len(seed_data) if not bypass_pipeline else 0,
+        "training_examples": len(examples),
+        "augment_factor": config.augment_factor,
+        "teacher_model": config.teacher,
+        "student_model": config.encoder_backbone,
+        **trainer.metrics,
+    }
+
+    result = DistillationResult(
+        model_path=Path(model_path),
+        metrics=result_metrics,
+        config=config,
+    )
+
+    summary_path = Path(config.output_dir) / config.name / "summary.json"
+    _save_summary_report(result, summary_path, console)
+
+    console.print("\n[bold green]✅ Encoder Distillation Complete![/bold green]")
+    console.print(f"Model path: {result.model_path}")
+    console.print(f"Training examples: {result.metrics['training_examples']}")
+
+    return result
+
+
 def _save_policy(policy: TaskPolicy, path: Path) -> None:
     """Save extracted task policy as JSON.
 
@@ -503,6 +752,7 @@ def _save_summary_report(result: DistillationResult, path: Path, console: Consol
         "model": {
             "teacher": result.config.teacher,
             "student": result.config.student,
+            "task_type": result.config.task_type,
             "model_path": str(result.model_path),
         },
         "data": {
@@ -528,6 +778,9 @@ def _save_summary_report(result: DistillationResult, path: Path, console: Consol
             "batch_size": result.config.batch_size,
             "max_seq_length": result.config.max_seq_length,
             "lora_rank": result.config.lora_rank,
+            "encoder_backbone": result.config.encoder_backbone,
+            "encoder_lora_rank": result.config.encoder_lora_rank,
+            "encoder_lora_targets": result.config.encoder_lora_targets,
         },
     }
 

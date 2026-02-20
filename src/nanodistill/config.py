@@ -6,7 +6,7 @@ Includes Apple Silicon auto-detection for optimal default configurations.
 import platform
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -218,6 +218,65 @@ class DistillationConfig(BaseModel):
     student: str = Field(
         default="mlx-community/Llama-3-8B-Instruct-4bit",
         description="Student model to fine-tune (MLX-compatible)",
+    )
+
+    task_type: Literal["causal_lm", "sequence_classification"] = Field(
+        default="causal_lm",
+        description="Training objective: decoder causal LM or encoder sequence classification",
+    )
+
+    num_labels: Optional[int] = Field(
+        default=None,
+        description="Number of class labels for sequence classification tasks",
+        ge=2,
+        le=1024,
+    )
+
+    text_field: str = Field(
+        default="input",
+        description="Input text field name for sequence-classification datasets",
+        min_length=1,
+    )
+
+    label_field: str = Field(
+        default="label",
+        description="Label field name for sequence-classification datasets",
+        min_length=1,
+    )
+
+    encoder_backbone: str = Field(
+        default="bert-base-uncased",
+        description="Encoder backbone model for sequence classification",
+    )
+
+    encoder_lora_rank: int = Field(
+        default=8,
+        description="LoRA rank for encoder modules (1-64)",
+        ge=1,
+        le=64,
+    )
+
+    encoder_lora_targets: List[str] = Field(
+        default_factory=lambda: ["query", "value"],
+        description="Encoder module name substrings to target with LoRA",
+        min_length=1,
+    )
+
+    encoder_use_lora: bool = Field(
+        default=True,
+        description="Enable LoRA adapters for sequence-classification encoder training",
+    )
+
+    encoder_load_pretrained: bool = Field(
+        default=True,
+        description="Load pretrained HF BERT weights before encoder fine-tuning",
+    )
+
+    encoder_max_length: int = Field(
+        default=256,
+        description="Max token length for encoder tokenization",
+        ge=32,
+        le=2048,
     )
 
     augment_factor: int = Field(
@@ -459,6 +518,31 @@ class DistillationConfig(BaseModel):
 
         return v
 
+    @field_validator("encoder_backbone")
+    @classmethod
+    def validate_encoder_backbone(cls, v: str) -> str:
+        """Validate that encoder backbone looks like a valid HF model ID."""
+        v = v.strip()
+
+        if not v or " " in v:
+            raise ValueError(f"Invalid encoder_backbone model name: {v}")
+
+        return v
+
+    @field_validator("encoder_lora_targets")
+    @classmethod
+    def validate_encoder_lora_targets(cls, v: List[str]) -> List[str]:
+        """Validate encoder LoRA targets are non-empty strings."""
+        cleaned = []
+        for target in v:
+            candidate = target.strip()
+            if not candidate:
+                raise ValueError("encoder_lora_targets must not contain empty values")
+            cleaned.append(candidate)
+        if not cleaned:
+            raise ValueError("encoder_lora_targets must contain at least one target")
+        return cleaned
+
     @field_validator("memory_hard_limit_gb")
     @classmethod
     def validate_memory_limits(cls, v: int, info) -> int:
@@ -508,10 +592,13 @@ class DistillationConfig(BaseModel):
         """Export config as dictionary (sensitive values redacted)."""
         return {
             "name": self.name,
+            "task_type": self.task_type,
             "seed_count": len(self.seed),
             "instruction_length": len(self.instruction),
             "teacher": self.teacher,
             "student": self.student,
+            "encoder_backbone": self.encoder_backbone,
+            "num_labels": self.num_labels,
             "augment_factor": self.augment_factor,
             "output_dir": self.output_dir,
         }

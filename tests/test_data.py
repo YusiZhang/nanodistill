@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from nanodistill.data import load_seed_data, to_dict_list, to_hf_dataset
+from nanodistill.data import load_classification_data, load_seed_data, to_dict_list, to_hf_dataset
 from nanodistill.teacher.schemas import ThinkingTrace
 from nanodistill.utils.errors import ConfigError
 
@@ -92,3 +92,38 @@ def test_to_dict_list():
     assert dict_list[0]["input"] == "Q1"
     assert dict_list[0]["thinking"] == "reasoning1"
     assert dict_list[0]["output"] == "A1"
+
+
+def test_load_classification_data_list():
+    """Test loading sequence-classification data from list."""
+    rows = [
+        {"input": "good", "label": "positive"},
+        {"input": "bad", "label": "negative"},
+    ]
+    loaded = load_classification_data(rows, text_field="input", label_field="label")
+    assert len(loaded) == 2
+    assert loaded[0]["input"] == "good"
+
+
+def test_load_classification_data_jsonl(tmp_path):
+    """Test loading sequence-classification rows from JSONL."""
+    jsonl_file = tmp_path / "cls.jsonl"
+    rows = [
+        {"input": "fast", "label": "positive"},
+        {"input": "slow", "label": "negative"},
+    ]
+    with open(jsonl_file, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+    loaded = load_classification_data(str(jsonl_file))
+    assert len(loaded) == 2
+
+
+def test_load_classification_data_missing_field():
+    """Test missing required label field raises ConfigError."""
+    rows = [
+        {"input": "text only"},
+    ]
+    with pytest.raises(ConfigError, match="missing required label field"):
+        load_classification_data(rows, text_field="input", label_field="label")

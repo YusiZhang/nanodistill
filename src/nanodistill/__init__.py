@@ -18,6 +18,7 @@ Example:
 
 from .config import DistillationConfig
 from .core import DistillationResult, distill
+from .encoder import Prediction, predict_sequence_class
 from .evaluator import evaluate_baseline
 
 __version__ = "0.1.0"
@@ -27,4 +28,6 @@ __all__ = [
     "DistillationResult",
     "DistillationConfig",
     "evaluate_baseline",
+    "predict_sequence_class",
+    "Prediction",
 ]

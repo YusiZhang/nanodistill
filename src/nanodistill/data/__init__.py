@@ -8,7 +8,9 @@ from .formatter import (
     merge_thinking_output,
 )
 from .loader import (
+    load_classification_data,
     load_seed_data,
+    load_training_data,
     load_traces_from_jsonl,
     save_traces_to_jsonl,
     to_dict_list,
@@ -16,6 +18,8 @@ from .loader import (
 )
 
 __all__ = [
+    "load_training_data",
+    "load_classification_data",
     "load_seed_data",
     "to_hf_dataset",
     "to_dict_list",

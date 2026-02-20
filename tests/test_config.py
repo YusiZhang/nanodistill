@@ -63,3 +63,33 @@ def test_config_empty_input():
             ],
             instruction="Test instruction",
         )
+
+
+def test_config_sequence_classification_defaults(sample_seed_data, sample_instruction):
+    """Test encoder sequence-classification config values."""
+    config = DistillationConfig(
+        name="encoder-test",
+        seed=sample_seed_data,
+        instruction=sample_instruction,
+        task_type="sequence_classification",
+        encoder_backbone="bert-base-uncased",
+    )
+
+    assert config.task_type == "sequence_classification"
+    assert config.encoder_backbone == "bert-base-uncased"
+    assert config.text_field == "input"
+    assert config.label_field == "label"
+    assert config.encoder_lora_targets == ["query", "value"]
+    assert config.encoder_load_pretrained is True
+
+
+def test_config_invalid_encoder_target(sample_seed_data, sample_instruction):
+    """Test that empty LoRA targets fail validation."""
+    with pytest.raises(ValueError):
+        DistillationConfig(
+            name="encoder-test",
+            seed=sample_seed_data,
+            instruction=sample_instruction,
+            task_type="sequence_classification",
+            encoder_lora_targets=["query", ""],
+        )
