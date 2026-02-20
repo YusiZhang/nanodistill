@@ -105,6 +105,18 @@ class MLXEncoderTrainer:
             except Exception as e:
                 raise TrainingError(f"Failed to apply encoder LoRA: {e}") from e
 
+            if lora_modules:
+                # Freeze the entire model, then selectively unfreeze only
+                # LoRA adapter weights (lora_a, lora_b) and the classifier.
+                self.model.model.freeze()
+                for module_path in lora_modules:
+                    parts = module_path.split(".")
+                    obj = self.model.model
+                    for p in parts:
+                        obj = obj[int(p)] if p.isdigit() else getattr(obj, p)
+                    obj.unfreeze(keys=["lora_a", "lora_b"])
+                self.model.model.classifier.unfreeze()
+
         optimizer = self._build_optimizer(self.config.learning_rate)
         loss_and_grad_fn = self.nn.value_and_grad(self.model.model, self._loss_fn)
 

@@ -432,6 +432,12 @@ def load_pretrained_bert_weights(
             continue
 
         hf_value = hf_weights.get(hf_name)
+        # Older BERT checkpoints use gamma/beta instead of weight/bias
+        # for LayerNorm parameters.
+        if hf_value is None and hf_name.endswith(".weight"):
+            hf_value = hf_weights.get(hf_name[:-6] + "gamma")
+        if hf_value is None and hf_name.endswith(".bias"):
+            hf_value = hf_weights.get(hf_name[:-4] + "beta")
         if hf_value is None:
             missing.append(mlx_name)
             continue
@@ -450,7 +456,8 @@ def load_pretrained_bert_weights(
             "Ensure it is a BERT checkpoint with safetensors weights."
         )
 
-    model.load_weights(assignments, strict=strict)
+    mx_assignments = [(name, mlx_mx.array(val)) for name, val in assignments]
+    model.load_weights(mx_assignments, strict=strict)
 
     return {
         "loaded": len(assignments),

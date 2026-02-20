@@ -309,7 +309,7 @@ class DistillationConfig(BaseModel):
         default=1,
         description="Number of training epochs",
         ge=1,
-        le=10,
+        le=100,
     )
 
     max_seq_length: int = Field(

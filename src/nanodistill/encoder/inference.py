@@ -58,10 +58,25 @@ def predict_sequence_class(model_path: str, texts: Sequence[str]) -> List[Predic
         max_length=int(cfg.get("encoder_max_length", 256)),
     )
 
+    try:
+        import mlx.core as mx
+    except ImportError as e:
+        raise ConfigError("mlx is required for encoder inference") from e
+
+    if cfg.get("encoder_use_lora"):
+        from .lora import apply_encoder_lora
+
+        apply_encoder_lora(
+            model.model,
+            rank=int(cfg.get("encoder_lora_rank", 8)),
+            targets=cfg.get("encoder_lora_targets", ["query", "value"]),
+        )
+
     weights = _load_weights(weights_file, npz_weights_file)
     if weights:
         try:
-            model.load_weights(list(weights.items()))
+            mx_weights = [(k, mx.array(v)) for k, v in weights.items()]
+            model.load_weights(mx_weights)
         except Exception as e:
             raise ConfigError(f"Failed loading encoder weights: {e}") from e
 
@@ -70,11 +85,6 @@ def predict_sequence_class(model_path: str, texts: Sequence[str]) -> List[Predic
         texts=list(texts),
         max_length=int(cfg.get("encoder_max_length", 256)),
     )
-
-    try:
-        import mlx.core as mx
-    except ImportError as e:
-        raise ConfigError("mlx is required for encoder inference") from e
 
     input_ids = mx.array(tokenized["input_ids"])
     attention_mask = mx.array(tokenized["attention_mask"])

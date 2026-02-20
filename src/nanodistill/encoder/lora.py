@@ -18,8 +18,12 @@ def apply_encoder_lora(model, rank: int, targets: List[str]) -> List[str]:
     except ImportError as e:
         raise ConfigError("mlx is required for encoder LoRA") from e
 
-    if not hasattr(nn, "LoRALinear"):
-        raise ConfigError("Installed mlx version does not include nn.LoRALinear")
+    try:
+        from mlx_lm.tuner.lora import LoRALinear
+    except ImportError as e:
+        raise ConfigError(
+            "mlx-lm is required for encoder LoRA (pip install mlx-lm)"
+        ) from e
 
     replaced: List[str] = []
 
@@ -28,7 +32,7 @@ def apply_encoder_lora(model, rank: int, targets: List[str]) -> List[str]:
         targets=targets,
         linear_type=nn.Linear,
     ):
-        lora_layer = _build_lora_layer(nn, linear, rank)
+        lora_layer = LoRALinear.from_base(linear, r=rank)
         setattr(parent, attr_name, lora_layer)
         replaced.append(module_path)
 
@@ -58,6 +62,25 @@ def _iter_target_linear_modules(
                     walk(value, path)
             return
 
+        # MLX Module inherits from dict, so check for .children()
+        # *before* the plain-dict branch to iterate modules properly.
+        if hasattr(parent, "children") and callable(parent.children):
+            items: dict = {}
+            items.update(parent.children())
+            for k, v in vars(parent).items():
+                if not k.startswith("_") and k not in items:
+                    items[k] = v
+
+            for attr_name, value in items.items():
+                path = f"{path_prefix}.{attr_name}" if path_prefix else attr_name
+                if isinstance(value, linear_type) and any(t in path for t in targets):
+                    matches.append((path, parent, attr_name, value))
+                    continue
+
+                if _looks_like_module(value) or isinstance(value, (list, tuple, dict)):
+                    walk(value, path)
+            return
+
         if isinstance(parent, dict):
             for key, value in parent.items():
                 path = f"{path_prefix}.{key}" if path_prefix else str(key)
@@ -65,41 +88,9 @@ def _iter_target_linear_modules(
                     walk(value, path)
             return
 
-        for attr_name, value in vars(parent).items():
-            if attr_name.startswith("_"):
-                continue
-
-            path = f"{path_prefix}.{attr_name}" if path_prefix else attr_name
-            if isinstance(value, linear_type) and any(t in path for t in targets):
-                matches.append((path, parent, attr_name, value))
-                continue
-
-            if _looks_like_module(value) or isinstance(value, (list, tuple, dict)):
-                walk(value, path)
-
     walk(model, "")
     return matches
 
-
-def _build_lora_layer(nn, linear, rank: int):
-    """Construct a LoRA layer from an existing linear layer across MLX versions."""
-    if hasattr(nn.LoRALinear, "from_linear"):
-        from_linear = nn.LoRALinear.from_linear
-        try:
-            return from_linear(linear, rank=rank)
-        except TypeError:
-            return from_linear(linear, r=rank)
-
-    # Fallback for constructor-style APIs.
-    in_features = getattr(linear, "in_features", None)
-    out_features = getattr(linear, "out_features", None)
-    if in_features is None or out_features is None:
-        raise ConfigError("Unable to derive in/out features for LoRA replacement")
-
-    try:
-        return nn.LoRALinear(in_features, out_features, rank=rank)
-    except TypeError:
-        return nn.LoRALinear(in_features, out_features, r=rank)
 
 
 def _looks_like_module(value) -> bool:
