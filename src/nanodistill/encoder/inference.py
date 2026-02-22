@@ -116,7 +116,8 @@ def _load_weights(weights_file: Path, npz_weights_file: Path) -> Dict[str, np.nd
         try:
             from safetensors.numpy import load_file
 
-            return load_file(str(weights_file))
+            result: Dict[str, np.ndarray] = load_file(str(weights_file))
+            return result
         except Exception:
             pass
 
@@ -131,4 +132,5 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     """Numerically stable softmax."""
     shifted = logits - logits.max(axis=1, keepdims=True)
     exp = np.exp(shifted)
-    return exp / np.maximum(exp.sum(axis=1, keepdims=True), 1e-12)
+    result: np.ndarray = exp / np.maximum(exp.sum(axis=1, keepdims=True), 1e-12)
+    return result

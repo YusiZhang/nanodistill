@@ -12,18 +12,22 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from ..utils.errors import ConfigError
 
-try:
+if TYPE_CHECKING:
     import mlx.core as mlx_mx
     import mlx.nn as mlx_nn
-except ImportError:
-    mlx_mx = None
-    mlx_nn = None
+else:
+    try:
+        import mlx.core as mlx_mx
+        import mlx.nn as mlx_nn
+    except ImportError:
+        mlx_mx = None  # type: ignore[assignment]
+        mlx_nn = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -89,7 +93,13 @@ def resolve_backbone_spec(backbone: str) -> EncoderBackboneSpec:
     )
 
 
-class BertEmbeddings(mlx_nn.Module if mlx_nn is not None else object):
+if TYPE_CHECKING:
+    _MLXModuleBase = mlx_nn.Module
+else:
+    _MLXModuleBase = mlx_nn.Module if mlx_nn is not None else object
+
+
+class BertEmbeddings(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT embedding stack: token + position + token type + layer norm."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -119,7 +129,7 @@ class BertEmbeddings(mlx_nn.Module if mlx_nn is not None else object):
         return self.dropout(hidden)
 
 
-class BertSelfAttention(mlx_nn.Module if mlx_nn is not None else object):
+class BertSelfAttention(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """Multi-head self-attention block used inside a BERT encoder layer."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -159,7 +169,7 @@ class BertSelfAttention(mlx_nn.Module if mlx_nn is not None else object):
         return context
 
 
-class BertSelfOutput(mlx_nn.Module if mlx_nn is not None else object):
+class BertSelfOutput(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """Output projection + residual + layer norm for self-attention."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -176,7 +186,7 @@ class BertSelfOutput(mlx_nn.Module if mlx_nn is not None else object):
         return self.layer_norm(hidden + residual)
 
 
-class BertAttention(mlx_nn.Module if mlx_nn is not None else object):
+class BertAttention(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT attention block (self-attention + output projection)."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -191,7 +201,7 @@ class BertAttention(mlx_nn.Module if mlx_nn is not None else object):
         return self.output(attended, hidden_states)
 
 
-class BertIntermediate(mlx_nn.Module if mlx_nn is not None else object):
+class BertIntermediate(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT intermediate feed-forward projection."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -206,7 +216,7 @@ class BertIntermediate(mlx_nn.Module if mlx_nn is not None else object):
         return mlx_nn.gelu(self.dense(hidden_states))
 
 
-class BertOutput(mlx_nn.Module if mlx_nn is not None else object):
+class BertOutput(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT output feed-forward projection + residual + layer norm."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -223,7 +233,7 @@ class BertOutput(mlx_nn.Module if mlx_nn is not None else object):
         return self.layer_norm(hidden + residual)
 
 
-class BertLayer(mlx_nn.Module if mlx_nn is not None else object):
+class BertLayer(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """Single transformer encoder block in BERT."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -240,7 +250,7 @@ class BertLayer(mlx_nn.Module if mlx_nn is not None else object):
         return self.output(interm, attn_out)
 
 
-class BertEncoder(mlx_nn.Module if mlx_nn is not None else object):
+class BertEncoder(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """Stack of BERT encoder layers."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -255,7 +265,7 @@ class BertEncoder(mlx_nn.Module if mlx_nn is not None else object):
         return hidden_states
 
 
-class BertPooler(mlx_nn.Module if mlx_nn is not None else object):
+class BertPooler(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT pooler over CLS token."""
 
     def __init__(self, spec: EncoderBackboneSpec):
@@ -271,7 +281,7 @@ class BertPooler(mlx_nn.Module if mlx_nn is not None else object):
         return mlx_mx.tanh(self.dense(cls))
 
 
-class BertForSequenceClassification(mlx_nn.Module if mlx_nn is not None else object):
+class BertForSequenceClassification(_MLXModuleBase):  # type: ignore[misc,valid-type]
     """BERT encoder with sequence-classification head."""
 
     def __init__(self, spec: EncoderBackboneSpec, num_labels: int):

@@ -571,6 +571,7 @@ def _distill_sequence_classification(
     bypass_pipeline = training_data is not None
     validate_output_dir(output_dir)
 
+    rows: List[Dict[str, Any]]
     if bypass_pipeline:
         assert training_data is not None
         rows = load_classification_data(
@@ -626,7 +627,7 @@ def _distill_sequence_classification(
         )
 
         # Default path: map seed input->text and output->label directly.
-        rows: List[Dict[str, Any]] = [
+        rows = [
             {
                 text_field: example["input"],
                 label_field: example["output"],

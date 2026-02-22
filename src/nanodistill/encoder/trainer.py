@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence, Union
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from ..utils.errors import TrainingError
 from .data import LabeledExample
 from .lora import apply_encoder_lora
 from .modeling import (
+    MLXEncoderSequenceClassifier,
     create_encoder_model,
     flatten_parameter_tree,
     load_pretrained_bert_weights,
@@ -47,11 +48,11 @@ class MLXEncoderTrainer:
         self.optim = optim
         self.config = config
 
-        self.model = None
+        self.model: Optional[MLXEncoderSequenceClassifier] = None
         self.model_meta: Dict[str, object] = {}
         self.label_to_id: Dict[str, int] = {}
         self.id_to_label: Dict[int, str] = {}
-        self.metrics: Dict[str, float] = {}
+        self.metrics: Dict[str, Union[float, List[List[int]]]] = {}
 
     def train(
         self,
@@ -81,6 +82,7 @@ class MLXEncoderTrainer:
             max_length=self.config.encoder_max_length,
         )
 
+        assert self.model is not None
         if self.config.encoder_load_pretrained:
             try:
                 preload_summary = load_pretrained_bert_weights(
@@ -137,11 +139,15 @@ class MLXEncoderTrainer:
         train_eval = self._evaluate(tokenizer, train_examples)
         val_eval = self._evaluate(tokenizer, val_examples) if val_examples else {}
 
+        _ta = train_eval.get("accuracy", 0.0)
+        _tf = train_eval.get("macro_f1", 0.0)
+        _va = val_eval.get("accuracy", 0.0) if val_eval else 0.0
+        _vf = val_eval.get("macro_f1", 0.0) if val_eval else 0.0
         self.metrics = {
-            "train_accuracy": float(train_eval.get("accuracy", 0.0)),
-            "train_macro_f1": float(train_eval.get("macro_f1", 0.0)),
-            "val_accuracy": float(val_eval.get("accuracy", 0.0)) if val_eval else 0.0,
-            "val_macro_f1": float(val_eval.get("macro_f1", 0.0)) if val_eval else 0.0,
+            "train_accuracy": float(_ta) if isinstance(_ta, (int, float)) else 0.0,
+            "train_macro_f1": float(_tf) if isinstance(_tf, (int, float)) else 0.0,
+            "val_accuracy": float(_va) if isinstance(_va, (int, float)) else 0.0,
+            "val_macro_f1": float(_vf) if isinstance(_vf, (int, float)) else 0.0,
             "train_examples": float(len(train_examples)),
             "val_examples": float(len(val_examples)),
             "num_labels": float(len(label_to_id)),
@@ -151,10 +157,12 @@ class MLXEncoderTrainer:
         model_dir = Path(self.config.output_dir) / self.config.name
         model_dir.mkdir(parents=True, exist_ok=True)
 
+        _cm = val_eval.get("confusion_matrix", [])
+        val_cm: List[List[int]] = _cm if isinstance(_cm, list) else []
         self._save_artifacts(
             output_dir=model_dir,
             lora_modules=lora_modules,
-            val_confusion_matrix=val_eval.get("confusion_matrix", []),
+            val_confusion_matrix=val_cm,
         )
 
         return str(model_dir)
@@ -194,11 +202,14 @@ class MLXEncoderTrainer:
             "labels": self.mx.array(labels),
         }
 
-    def _evaluate(self, tokenizer, examples: Sequence[LabeledExample]) -> Dict[str, object]:
+    def _evaluate(
+        self, tokenizer, examples: Sequence[LabeledExample]
+    ) -> Dict[str, Union[float, List[List[int]]]]:
         """Evaluate current model and compute metrics."""
         if not examples:
             return {}
 
+        assert self.model is not None
         self.model.model.eval()
         all_preds: List[int] = []
         all_labels: List[int] = []
@@ -234,6 +245,7 @@ class MLXEncoderTrainer:
         val_confusion_matrix: List[List[int]],
     ) -> None:
         """Save model, config, label map, and metrics."""
+        assert self.model is not None
         model_path = output_dir / "encoder_model.safetensors"
         label_map_path = output_dir / "label_map.json"
         config_path = output_dir / "encoder_config.json"
@@ -300,7 +312,8 @@ class MLXEncoderTrainer:
             raise TrainingError(f"Expected 2D logits, got shape {logits.shape}")
         shifted = logits - logits.max(axis=1, keepdims=True)
         exp = np.exp(shifted)
-        return exp / np.maximum(exp.sum(axis=1, keepdims=True), 1e-12)
+        result: np.ndarray = exp / np.maximum(exp.sum(axis=1, keepdims=True), 1e-12)
+        return result
 
 
 def _accuracy(labels: Sequence[int], preds: Sequence[int]) -> float:
